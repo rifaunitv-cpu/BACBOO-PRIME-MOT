@@ -1,52 +1,70 @@
 # ============================================================
-# Dockerfile
-# Imagem de produção para a aplicação FastAPI
+# Dockerfile (COM PLAYWRIGHT PRONTO)
 # ============================================================
 
-# Usa Python slim para imagem menor
 FROM python:3.11-slim
 
-# Define variáveis de ambiente do Python
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app
 
-# Cria usuário não-root para segurança
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
-# Diretório de trabalho
 WORKDIR /app
 
-# Instala dependências do sistema necessárias para psycopg2 e scikit-learn
+# 🔥 DEPENDÊNCIAS DO SISTEMA (INCLUINDO PLAYWRIGHT)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
+    wget \
+    curl \
+    gnupg \
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libx11-xcb1 \
+    libxfixes3 \
+    libxcb1 \
+    libxext6 \
+    libxi6 \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copia e instala dependências Python
-# Copiado antes do código para aproveitar cache de camadas do Docker
+# 📦 DEPENDÊNCIAS PYTHON
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copia o código da aplicação
+# 🔥 PLAYWRIGHT (AGORA SIM CORRETO)
+RUN pip install playwright && playwright install chromium
+
+# 📁 CÓDIGO
 COPY app/ ./app/
 COPY frontend/ ./frontend/
 
-# Copia o script de entrypoint
+# 📜 ENTRYPOINT
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
-# Muda para o usuário não-root
+# 🔐 PERMISSÃO
 RUN chown -R appuser:appgroup /app
 USER appuser
 
-# Porta padrão da aplicação
+# 🌐 PORTA
 EXPOSE 8000
 
-# Healthcheck do Docker
+# ❤️ HEALTHCHECK
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"
 
-# Entrypoint
+# 🚀 START
 ENTRYPOINT ["./entrypoint.sh"]
