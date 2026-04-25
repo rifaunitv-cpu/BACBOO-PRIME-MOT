@@ -12,7 +12,7 @@ RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
 WORKDIR /app
 
-# 🔥 DEPENDÊNCIAS DO SISTEMA (INCLUINDO PLAYWRIGHT)
+# 🔥 DEPENDÊNCIAS DO SISTEMA (COMPATÍVEL COM PLAYWRIGHT)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
@@ -44,8 +44,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# 🔥 PLAYWRIGHT (AGORA SIM CORRETO)
-RUN pip install playwright && playwright install chromium
+# 🔥 INSTALA NAVEGADOR DO PLAYWRIGHT
+RUN playwright install chromium
 
 # 📁 CÓDIGO
 COPY app/ ./app/
