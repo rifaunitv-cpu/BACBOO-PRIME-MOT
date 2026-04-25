@@ -1,9 +1,6 @@
 # ============================================================
 # app/services/scheduler_service.py
 # Automação do ciclo coleta → análise → envio.
-#
-# Usa APScheduler para executar o ciclo periodicamente.
-# O intervalo é configurado via COLLECT_INTERVAL_SECONDS no .env
 # ============================================================
 
 import logging
@@ -26,7 +23,7 @@ settings = get_settings()
 # Instância global do scheduler
 _scheduler: BackgroundScheduler | None = None
 
-# Estatísticas do scheduler (para o endpoint de status)
+# Estatísticas do scheduler
 _stats = {
     "ciclos_executados": 0,
     "sinais_enviados": 0,
@@ -37,10 +34,10 @@ _stats = {
 
 def _executar_ciclo() -> None:
     """
-    Ciclo completo de automação:
-      1. Coleta um novo resultado
-      2. Analisa o histórico
-      3. Se houver sinal, envia ao Telegram e atualiza o banco
+    Ciclo completo:
+      1. Coleta (AGORA VIA SCRAPING)
+      2. Análise
+      3. Envio Telegram
     """
     global _stats
 
@@ -48,16 +45,28 @@ def _executar_ciclo() -> None:
     db: Session = SessionLocal()
 
     try:
-        # PASSO 1 — Coleta
-        resultado = coletar_novo_resultado(db, fonte="simulado")
-        logger.debug(f"Ciclo: resultado coletado → {resultado.resultado}")
+        # ===================================================
+        # PASSO 1 — COLETA (SCRAPING REAL 🔥)
+        # ===================================================
+        resultado = coletar_novo_resultado(db, fonte="scraping")
 
-        # PASSO 2 — Análise
+        if resultado:
+            logger.debug(f"Ciclo: resultado coletado → {resultado.resultado}")
+        else:
+            logger.warning("Nenhum resultado coletado neste ciclo")
+            return
+
+        # ===================================================
+        # PASSO 2 — ANÁLISE
+        # ===================================================
         sinal = analisar_e_gerar_sinal(db)
 
-        # PASSO 3 — Envio (se houver sinal)
+        # ===================================================
+        # PASSO 3 — ENVIO TELEGRAM
+        # ===================================================
         if sinal is not None:
             enviado = enviar_sinal(sinal)
+
             if enviado:
                 sinal.enviado_telegram = True
                 db.commit()
@@ -65,8 +74,7 @@ def _executar_ciclo() -> None:
                 logger.info(f"Sinal {sinal.id} enviado ao Telegram ✓")
             else:
                 logger.warning(
-                    f"Sinal {sinal.id} gerado mas NÃO enviado ao Telegram "
-                    "(verifique TELEGRAM_TOKEN e TELEGRAM_CHAT_ID no .env)"
+                    f"Sinal {sinal.id} gerado mas NÃO enviado ao Telegram"
                 )
 
         _stats["ciclos_executados"] += 1
@@ -75,61 +83,55 @@ def _executar_ciclo() -> None:
     except Exception as e:
         logger.error(f"Erro no ciclo de automação: {e}", exc_info=True)
         _stats["erros"] += 1
+
     finally:
         db.close()
 
 
 def _listener_jobs(event) -> None:
-    """Ouve eventos do APScheduler para logging."""
+    """Logs do scheduler"""
     if event.exception:
-        logger.error(f"Job {event.job_id} falhou com exceção: {event.exception}")
+        logger.error(f"Job {event.job_id} falhou: {event.exception}")
     else:
         logger.debug(f"Job {event.job_id} executado com sucesso.")
 
 
 def iniciar_scheduler() -> None:
-    """
-    Inicializa e inicia o scheduler em background.
-    Chamado no startup do FastAPI.
-    """
     global _scheduler
 
     if _scheduler is not None and _scheduler.running:
-        logger.warning("Scheduler já está rodando. Ignorando chamada duplicada.")
+        logger.warning("Scheduler já está rodando.")
         return
 
     _scheduler = BackgroundScheduler(timezone="UTC")
 
-    # Registra o job principal
     _scheduler.add_job(
         func=_executar_ciclo,
         trigger=IntervalTrigger(seconds=settings.collect_interval_seconds),
         id="ciclo_principal",
-        name="Ciclo: coleta → análise → Telegram",
+        name="Coleta → Análise → Telegram",
         replace_existing=True,
-        max_instances=1,          # Garante que apenas um ciclo rode por vez
-        coalesce=True,             # Agrupa execuções perdidas em uma única
+        max_instances=1,
+        coalesce=True,
     )
 
-    # Registra listener de eventos
     _scheduler.add_listener(_listener_jobs, EVENT_JOB_ERROR | EVENT_JOB_EXECUTED)
 
     _scheduler.start()
+
     logger.info(
-        f"Scheduler iniciado. Ciclo a cada {settings.collect_interval_seconds}s."
+        f"Scheduler iniciado a cada {settings.collect_interval_seconds}s"
     )
 
 
 def parar_scheduler() -> None:
-    """Para o scheduler. Chamado no shutdown do FastAPI."""
     global _scheduler
-    if _scheduler is not None and _scheduler.running:
+    if _scheduler and _scheduler.running:
         _scheduler.shutdown(wait=False)
         logger.info("Scheduler parado.")
 
 
 def status_scheduler() -> dict:
-    """Retorna o estado atual do scheduler e as estatísticas."""
     if _scheduler is None:
         return {"rodando": False, **_stats}
 
