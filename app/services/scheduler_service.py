@@ -4,6 +4,7 @@
 # ============================================================
 
 import logging
+import time
 from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -22,6 +23,9 @@ settings = get_settings()
 
 _scheduler: BackgroundScheduler | None = None
 
+# 🔥 CONTROLE DE SCRAPING
+ultimo_scraping = 0
+
 _stats = {
     "ciclos_executados": 0,
     "sinais_enviados": 0,
@@ -31,24 +35,32 @@ _stats = {
 
 
 def _executar_ciclo() -> None:
-    global _stats
+    global _stats, ultimo_scraping
 
     logger.debug("Iniciando ciclo de automação...")
     db: Session = SessionLocal()
 
     try:
         # ===================================================
-        # PASSO 1 — COLETA REAL (SCRAPING)
+        # PASSO 1 — COLETA CONTROLADA (SCRAPING)
         # ===================================================
-        resultado = coletar_novo_resultado(db, fonte="scraping")
+        agora = time.time()
+        resultado = None
 
-        if resultado:
-            logger.debug(f"Ciclo: resultado coletado → {resultado.resultado}")
+        # 🔥 só faz scraping a cada 30 segundos
+        if agora - ultimo_scraping > 30:
+            resultado = coletar_novo_resultado(db, fonte="scraping")
+            ultimo_scraping = agora
+
+            if resultado:
+                logger.debug(f"Ciclo: resultado coletado → {resultado.resultado}")
+            else:
+                logger.warning("Scraping executado mas sem resultado novo")
         else:
-            logger.warning("Nenhum resultado coletado (falha ou repetido)")
+            logger.debug("Pulando scraping (aguardando intervalo)")
 
         # ===================================================
-        # PASSO 2 — ANÁLISE (só roda se tiver resultado novo)
+        # PASSO 2 — ANÁLISE (só se tiver resultado novo)
         # ===================================================
         sinal = None
         if resultado:
@@ -69,12 +81,12 @@ def _executar_ciclo() -> None:
                 logger.warning(f"Sinal {sinal.id} NÃO enviado ao Telegram")
 
         # ===================================================
-        # 🔥 PASSO 4 — VERIFICAR RESULTADO (SEMPRE RODA)
+        # PASSO 4 — VERIFICAR RESULTADO (SEMPRE RODA)
         # ===================================================
         verificar_resultado(db)
 
         # ===================================================
-        # 📊 STATS (AGORA SEMPRE ATUALIZA)
+        # STATS
         # ===================================================
         _stats["ciclos_executados"] += 1
         _stats["ultimo_ciclo"] = datetime.now(timezone.utc).isoformat()
@@ -113,7 +125,8 @@ def iniciar_scheduler() -> None:
         coalesce=True,
     )
 
-    _scheduler.add_listener(_listener_jobs, EVENT_JOB_ERROR | EVENT_JOB_EXECED)
+    # 🔥 CORRIGIDO AQUI
+    _scheduler.add_listener(_listener_jobs, EVENT_JOB_ERROR | EVENT_JOB_EXECUTED)
 
     _scheduler.start()
 
