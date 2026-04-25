@@ -1,5 +1,5 @@
 # ============================================================
-# TELEGRAM SERVICE (COM GREEN/RED + COBERTURA)
+# TELEGRAM SERVICE (ESTÁVEL + GREEN/RED CORRETO)
 # ============================================================
 
 import logging
@@ -16,9 +16,6 @@ settings = get_settings()
 TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}/{method}"
 TIMEOUT = 10
 
-# 🔥 CONTROLE DE SINAL ATIVO
-_sinal_ativo: Optional[Sinal] = None
-
 
 def _build_url(method: str) -> str:
     return TELEGRAM_API_BASE.format(
@@ -28,7 +25,7 @@ def _build_url(method: str) -> str:
 
 
 # ============================================================
-# 📤 ENVIO BASE
+# ENVIO BASE
 # ============================================================
 
 def _enviar(mensagem: str) -> bool:
@@ -53,7 +50,7 @@ def _enviar(mensagem: str) -> bool:
 
 
 # ============================================================
-# 🔥 MENSAGEM DE ENTRADA (SINAL)
+# MENSAGEM DE SINAL
 # ============================================================
 
 def _formatar_sinal(sinal: Sinal) -> str:
@@ -74,16 +71,14 @@ def _formatar_sinal(sinal: Sinal) -> str:
 ⚪ <b>Cobrir no branco</b>
 
 👉 <a href="https://blaze.bet.br/pt/">ENTRAR NA BLAZE</a>
-"""
+""".strip()
 
 
 # ============================================================
-# 🚀 ENVIA SINAL
+# ENVIA SINAL
 # ============================================================
 
 def enviar_sinal(sinal: Sinal) -> bool:
-    global _sinal_ativo
-
     if not settings.telegram_token or not settings.telegram_chat_id:
         logger.warning("Telegram não configurado")
         return False
@@ -94,66 +89,66 @@ def enviar_sinal(sinal: Sinal) -> bool:
 
     if enviado:
         logger.info(f"Sinal {sinal.id} enviado")
-        _sinal_ativo = sinal  # 🔥 GUARDA PARA VALIDAR DEPOIS
 
     return enviado
 
 
 # ============================================================
-# 🧠 VERIFICA RESULTADO (GREEN / RED)
+# VERIFICAR RESULTADO (VERSÃO CORRETA)
 # ============================================================
 
 def verificar_resultado(db) -> None:
     """
-    Deve ser chamado a cada ciclo do scheduler
+    Procura sinais enviados e ainda não verificados
+    e compara com o próximo resultado após o sinal
     """
-    global _sinal_ativo
 
-    if _sinal_ativo is None:
-        return
-
-    # pega último resultado
-    ultimo = (
-        db.query(Resultado)
-        .order_by(Resultado.timestamp.desc())
+    # pega último sinal enviado e ainda não verificado
+    sinal = (
+        db.query(Sinal)
+        .filter(Sinal.enviado_telegram == True)
+        .filter(Sinal.acertou.is_(None))
+        .order_by(Sinal.timestamp.desc())
         .first()
     )
 
-    if not ultimo:
+    if not sinal:
         return
 
-    entrada = _sinal_ativo.tipo.lower()
+    # pega resultados APÓS o sinal
+    resultados = (
+        db.query(Resultado)
+        .filter(Resultado.timestamp > sinal.timestamp)
+        .order_by(Resultado.timestamp.asc())
+        .limit(2)  # pega até 2 jogadas (segurança)
+        .all()
+    )
 
-    # 🔥 converte verde -> azul
-    entrada = entrada.replace("verde", "azul")
+    if not resultados:
+        return
 
-    resultado = ultimo.resultado.lower()
-
-    # mapeamento
-    mapa = {
-        "azul": "azul",
-        "vermelho": "vermelho",
-        "branco": "branco",
-    }
+    entrada = sinal.tipo.lower().replace("verde", "azul")
 
     entrada_cor = None
-    for k in mapa:
-        if k in entrada:
-            entrada_cor = k
+    if "azul" in entrada:
+        entrada_cor = "azul"
+    elif "vermelho" in entrada:
+        entrada_cor = "vermelho"
 
     if not entrada_cor:
         return
 
-    # 🔥 GREEN
-    if resultado == entrada_cor or resultado == "branco":
-        _enviar("✅ <b>GREEN!</b>")
-        logger.info("GREEN enviado")
-        _sinal_ativo = None
-        return
+    # 🔥 verifica primeira jogada após sinal
+    resultado_real = resultados[0].resultado.lower()
 
-    # 🔴 RED
+    if resultado_real == entrada_cor or resultado_real == "branco":
+        _enviar("✅ <b>GREEN!</b>")
+        sinal.acertou = True
+        logger.info("GREEN confirmado")
+
     else:
         _enviar("❌ <b>RED!</b>")
-        logger.info("RED enviado")
-        _sinal_ativo = None
-        return
+        sinal.acertou = False
+        logger.info("RED confirmado")
+
+    db.commit()
