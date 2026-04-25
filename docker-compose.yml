@@ -1,0 +1,82 @@
+# ============================================================
+# docker-compose.yml
+# Orquestração local: app FastAPI + PostgreSQL
+# ============================================================
+
+version: "3.9"
+
+services:
+
+  # ----------------------------------------------------------
+  # Banco de dados PostgreSQL
+  # ----------------------------------------------------------
+  db:
+    image: postgres:15-alpine
+    container_name: signal_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: signal_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d signal_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ----------------------------------------------------------
+  # Aplicação FastAPI
+  # ----------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: signal_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Garante que o app aponte para o container do banco
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/signal_db
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Monta o código local para desenvolvimento com hot-reload
+      # Remova em produção para usar apenas o código da imagem
+      - ./app:/app/app
+      - ./frontend:/app/frontend
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ----------------------------------------------------------
+  # Adminer — UI web para o banco (opcional, apenas dev)
+  # Acesse em: http://localhost:8080
+  # Servidor: db | Usuário: postgres | Senha: postgres | BD: signal_db
+  # ----------------------------------------------------------
+  adminer:
+    image: adminer:latest
+    container_name: signal_adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    profiles:
+      - dev    # Só sobe com: docker compose --profile dev up
+
+volumes:
+  postgres_data:
+    name: signal_postgres_data
