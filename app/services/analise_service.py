@@ -1,5 +1,5 @@
 # ============================================================
-# app/services/analise_service.py (EDITADO)
+# app/services/analise_service.py (CORRIGIDO FINAL)
 # ============================================================
 
 import logging
@@ -15,9 +15,7 @@ from app.models.sinal import Sinal
 
 logger = logging.getLogger(__name__)
 
-# 🔥 FORÇANDO MÍNIMO EM 85%
 MIN_CONFIDENCE = 85.0
-
 MIN_HISTORICO = 10
 JANELA = 20
 
@@ -61,7 +59,9 @@ def _calcular_streak(arr: np.ndarray) -> int:
     return streak * int(arr[-1])
 
 
-# 🔥 REGRA SIMPLES AJUSTADA (MAS NÃO PASSA DE 80%)
+# -----------------------------------------
+# REGRA SIMPLES (não passa de 80%)
+# -----------------------------------------
 def _analisar_regra_simples(serie_codificada: list[int]) -> ResultadoAnalise:
     features = _extrair_features(serie_codificada)
     streak = features["streak"]
@@ -71,17 +71,19 @@ def _analisar_regra_simples(serie_codificada: list[int]) -> ResultadoAnalise:
         confianca = min(60 + abs(streak) * 5, 80)
 
         return ResultadoAnalise(
-            sinal_gerado=True,
-            tipo=f"entrada {proximo}",
-            confianca=confianca,
-            algoritmo="regra_simples",
-            descricao=f"Streak detectado ({abs(streak)})",
+            True,
+            f"entrada {proximo}",
+            confianca,
+            "regra_simples",
+            f"Streak detectado ({abs(streak)})",
         )
 
     return ResultadoAnalise(False, "", 0.0, "regra_simples", "Sem padrão")
 
 
-# 🔥 RANDOM FOREST (ÚNICO QUE PODE PASSAR DE 85%)
+# -----------------------------------------
+# RANDOM FOREST
+# -----------------------------------------
 _modelo_rf = None
 
 
@@ -131,11 +133,11 @@ def _analisar_random_forest(serie_codificada: list[int]) -> ResultadoAnalise:
         tipo = f"entrada {mapa.get(int(classe))}"
 
         return ResultadoAnalise(
-            sinal_gerado=confianca >= MIN_CONFIDENCE,
-            tipo=tipo,
-            confianca=confianca,
-            algoritmo="rf",
-            descricao="Alta probabilidade detectada",
+            confianca >= MIN_CONFIDENCE,
+            tipo,
+            confianca,
+            "rf",
+            "Alta probabilidade detectada",
         )
 
     except Exception as e:
@@ -144,7 +146,7 @@ def _analisar_random_forest(serie_codificada: list[int]) -> ResultadoAnalise:
 
 
 # ============================================================
-# 🔥 FUNÇÃO PRINCIPAL (EDITADA)
+# FUNÇÃO PRINCIPAL
 # ============================================================
 
 def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
@@ -167,20 +169,13 @@ def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
 
     melhor = max([r1, r2], key=lambda r: r.confianca)
 
-    # 🔥 FILTRO FINAL 85%
     if melhor.confianca < MIN_CONFIDENCE:
         logger.info("Ignorado: abaixo de 85%")
         return None
 
-    # 🔥 ADICIONA COBERTURA NO BRANCO
-    mensagem = (
-        f"{melhor.tipo}\n"
-        f"Confiança: {melhor.confianca:.1f}%\n"
-        f"Cobrir no branco (empate)"
-    )
-
+    # 🔥 SALVA APENAS O TIPO LIMPO
     novo = Sinal(
-        tipo=mensagem,
+        tipo=melhor.tipo,  # 🔥 IMPORTANTE
         confianca=melhor.confianca,
         algoritmo=melhor.algoritmo,
         descricao=melhor.descricao,
@@ -192,6 +187,27 @@ def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
     db.commit()
     db.refresh(novo)
 
-    logger.info(f"Sinal criado: {mensagem}")
+    logger.info(f"Sinal criado: {melhor.tipo} ({melhor.confianca:.1f}%)")
 
     return novo
+
+
+# ============================================================
+# 🔥 FUNÇÃO QUE FALTAVA (OBRIGATÓRIA)
+# ============================================================
+
+def calcular_taxa_acerto(db: Session) -> dict:
+    sinais = db.query(Sinal).filter(Sinal.acertou.isnot(None)).all()
+
+    if not sinais:
+        return {"total_verificados": 0, "acertos": 0, "taxa_acerto": 0.0}
+
+    acertos = sum(1 for s in sinais if s.acertou is True)
+    taxa = (acertos / len(sinais)) * 100.0
+
+    return {
+        "total_verificados": len(sinais),
+        "acertos": acertos,
+        "erros": len(sinais) - acertos,
+        "taxa_acerto": round(taxa, 2),
+    }
