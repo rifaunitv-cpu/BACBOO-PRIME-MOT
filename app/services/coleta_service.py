@@ -1,105 +1,71 @@
 # ============================================================
-# COLETA REAL BACBO (TIPMINER) - VERSÃO CORRIGIDA
+# app/services/coleta_service.py
 # ============================================================
 
 import logging
 from datetime import datetime, timezone
 from typing import Optional
-
-import requests
-from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
-
 from app.models.resultado import Resultado
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-URL = "https://www.tipminer.com/br/historico/blaze/bac-bo-ao-vivo"
+settings = get_settings()
 
 # ------------------------------------------------------------------
-# SCRAPING REAL (TIPMINER)
+# Coletores
 # ------------------------------------------------------------------
 
-def _coletar_via_scraping() -> Optional[str]:
+def _coletar_via_scraping() -> str:
+    from app.services.scraper_bacbo import coletar_resultado_bacbo
+    return coletar_resultado_bacbo(debug=False)
+
+
+def _coletar_simulado() -> str:
+    import random
+    return random.choices(
+        ["verde", "vermelho", "branco"],
+        weights=[0.46, 0.46, 0.08]
+    )[0]
+
+
+COLETORES = {
+    "scraping": _coletar_via_scraping,
+    "simulado": _coletar_simulado,
+}
+
+# ------------------------------------------------------------------
+# Função principal — COM o parâmetro fonte
+# ------------------------------------------------------------------
+
+def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Resultado:
+    """
+    Coleta um novo resultado e persiste no banco.
+    fonte: "scraping" (real via TipMiner) ou "simulado"
+    """
+    coletor = COLETORES.get(fonte, _coletar_simulado)
+
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept-Language": "pt-BR,pt;q=0.9"
-        }
-
-        response = requests.get(URL, headers=headers, timeout=10)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # pega células do resultado
-        elementos = soup.select("div[class*='bg-cell-']")
-
-        if not elementos:
-            logger.warning("Nenhum resultado encontrado no site")
-            return None
-
-        el = elementos[0]
-        classes = el.get("class", [])
-
-        if any("player" in c for c in classes):
-            return "vermelho"
-
-        if any("banker" in c for c in classes):
-            return "azul"
-
-        if any("tie" in c for c in classes):
-            return "branco"
-
-        logger.warning(f"Classe desconhecida: {classes}")
-        return None
-
+        valor = coletor()
+        logger.debug(f"Resultado coletado via '{fonte}': {valor}")
     except Exception as e:
-        logger.error(f"Erro no scraping: {e}")
-        return None
-
-
-# ------------------------------------------------------------------
-# FUNÇÃO PRINCIPAL
-# ------------------------------------------------------------------
-
-def coletar_novo_resultado(db: Session) -> Optional[Resultado]:
-    valor = _coletar_via_scraping()
-
-    if not valor:
-        return None
-
-    # 🔥 EVITA DUPLICAR RESULTADO
-    ultimo = (
-        db.query(Resultado)
-        .order_by(Resultado.timestamp.desc())
-        .first()
-    )
-
-    if ultimo and ultimo.resultado == valor:
-        logger.info("Resultado repetido, ignorando...")
-        return None
+        logger.error(f"Erro ao coletar de '{fonte}': {e}. Usando simulado.")
+        valor = _coletar_simulado()
 
     novo = Resultado(
         resultado=valor,
-        fonte="tipminer",
+        fonte=fonte,
         timestamp=datetime.now(timezone.utc),
     )
-
     db.add(novo)
     db.commit()
     db.refresh(novo)
 
-    logger.info(f"Resultado salvo: {valor}")
-
+    logger.info(f"Resultado salvo → id={novo.id} valor='{novo.resultado}'")
     return novo
 
 
-# ------------------------------------------------------------------
-# CONSULTAS
-# ------------------------------------------------------------------
-
-def buscar_ultimos_resultados(db: Session, limite: int = 100):
+def buscar_ultimos_resultados(db: Session, limite: int = 100) -> list[Resultado]:
     return (
         db.query(Resultado)
         .order_by(Resultado.timestamp.desc())
