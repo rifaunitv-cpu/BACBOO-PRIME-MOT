@@ -20,10 +20,8 @@ from app.services.telegram_service import enviar_sinal
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Instância global do scheduler
 _scheduler: BackgroundScheduler | None = None
 
-# Estatísticas do scheduler
 _stats = {
     "ciclos_executados": 0,
     "sinais_enviados": 0,
@@ -33,12 +31,6 @@ _stats = {
 
 
 def _executar_ciclo() -> None:
-    """
-    Ciclo completo:
-      1. Coleta (AGORA VIA SCRAPING)
-      2. Análise
-      3. Envio Telegram
-    """
     global _stats
 
     logger.debug("Iniciando ciclo de automação...")
@@ -46,15 +38,15 @@ def _executar_ciclo() -> None:
 
     try:
         # ===================================================
-        # PASSO 1 — COLETA (SCRAPING REAL 🔥)
+        # PASSO 1 — COLETA REAL (SCRAPING)
         # ===================================================
         resultado = coletar_novo_resultado(db, fonte="scraping")
 
-        if resultado:
-            logger.debug(f"Ciclo: resultado coletado → {resultado.resultado}")
-        else:
-            logger.warning("Nenhum resultado coletado neste ciclo")
+        if not resultado:
+            logger.warning("Nenhum resultado coletado (falha ou repetido)")
             return
+
+        logger.debug(f"Ciclo: resultado coletado → {resultado.resultado}")
 
         # ===================================================
         # PASSO 2 — ANÁLISE
@@ -64,7 +56,7 @@ def _executar_ciclo() -> None:
         # ===================================================
         # PASSO 3 — ENVIO TELEGRAM
         # ===================================================
-        if sinal is not None:
+        if sinal:
             enviado = enviar_sinal(sinal)
 
             if enviado:
@@ -73,9 +65,7 @@ def _executar_ciclo() -> None:
                 _stats["sinais_enviados"] += 1
                 logger.info(f"Sinal {sinal.id} enviado ao Telegram ✓")
             else:
-                logger.warning(
-                    f"Sinal {sinal.id} gerado mas NÃO enviado ao Telegram"
-                )
+                logger.warning(f"Sinal {sinal.id} NÃO enviado ao Telegram")
 
         _stats["ciclos_executados"] += 1
         _stats["ultimo_ciclo"] = datetime.now(timezone.utc).isoformat()
@@ -89,7 +79,6 @@ def _executar_ciclo() -> None:
 
 
 def _listener_jobs(event) -> None:
-    """Logs do scheduler"""
     if event.exception:
         logger.error(f"Job {event.job_id} falhou: {event.exception}")
     else:
