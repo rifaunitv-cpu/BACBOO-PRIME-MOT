@@ -1,5 +1,5 @@
 # ============================================================
-# TELEGRAM SERVICE (FINAL - BLAZE + AZUL/VERMELHO/BRANCO)
+# TELEGRAM SERVICE (FINAL AJUSTADO - 85% + GALE + RESULTADO)
 # ============================================================
 
 import logging
@@ -19,9 +19,8 @@ def _build_url(method: str) -> str:
     return TELEGRAM_API_BASE.format(token=settings.telegram_token, method=method)
 
 
-# 🔥 MENSAGEM COMPLETA
+# 🔥 MENSAGEM DO SINAL (AGORA COM GALE + COBERTURA)
 def _formatar_mensagem_sinal(sinal: Sinal) -> str:
-    # Ajusta automaticamente VERDE -> AZUL
     tipo = sinal.tipo.lower().replace("verde", "azul")
 
     emoji_tipo = {
@@ -38,6 +37,9 @@ def _formatar_mensagem_sinal(sinal: Sinal) -> str:
 🎯 Entrada: <b>{tipo.upper()}</b> {emoji}
 📊 Confiança: <b>{sinal.confianca:.1f}%</b>
 
+⚠️ Fazer até 2 Gales
+⚪ Cobrir no BRANCO (TIE)
+
 👉 <a href="https://blaze.bet.br/pt/">CLIQUE AQUI PARA JOGAR</a>
 
 🕒 {sinal.timestamp.strftime('%d/%m/%Y %H:%M:%S') if sinal.timestamp else 'agora'}
@@ -46,7 +48,20 @@ def _formatar_mensagem_sinal(sinal: Sinal) -> str:
     return mensagem.strip()
 
 
+# 🔥 NOVO: MENSAGEM DE RESULTADO (GREEN / RED)
+def _formatar_resultado(acertou: bool) -> str:
+    if acertou:
+        return "✅ <b>RESULTADO: GREEN</b>"
+    else:
+        return "❌ <b>RESULTADO: RED</b>"
+
+
 def enviar_sinal(sinal: Sinal) -> bool:
+    # 🔥 BLOQUEIO DE CONFIANÇA (85%)
+    if sinal.confianca < 85:
+        logger.info(f"Sinal ignorado por baixa confiança: {sinal.confianca:.1f}%")
+        return False
+
     if not settings.telegram_token:
         logger.warning("TELEGRAM_TOKEN não configurado.")
         return False
@@ -79,6 +94,32 @@ def enviar_sinal(sinal: Sinal) -> bool:
 
     except Exception as e:
         logger.error(f"Erro ao enviar mensagem: {e}")
+        return False
+
+
+# 🔥 NOVO: ENVIAR RESULTADO FINAL (GREEN / RED)
+def enviar_resultado(sinal: Sinal) -> bool:
+    if sinal.acertou is None:
+        return False
+
+    mensagem = _formatar_resultado(sinal.acertou)
+
+    try:
+        url = _build_url("sendMessage")
+
+        payload = {
+            "chat_id": settings.telegram_chat_id,
+            "text": mensagem,
+            "parse_mode": "HTML",
+        }
+
+        with httpx.Client(timeout=TIMEOUT) as client:
+            response = client.post(url, json=payload)
+
+        return response.status_code == 200
+
+    except Exception as e:
+        logger.error(f"Erro ao enviar resultado: {e}")
         return False
 
 
