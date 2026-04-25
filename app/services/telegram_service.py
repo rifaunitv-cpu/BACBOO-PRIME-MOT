@@ -94,6 +94,38 @@ def enviar_sinal(sinal: Sinal) -> bool:
 
 
 # ============================================================
+# TESTAR CONEXÃO
+# ============================================================
+
+def testar_conexao() -> dict:
+    """
+    Testa se o bot Telegram está acessível e retorna dict de status.
+    Retorna: {"ok": True/False, "bot": "<nome>" ou None}
+    """
+    if not settings.telegram_token:
+        logger.warning("Telegram token não configurado")
+        return {"ok": False, "bot": None}
+
+    try:
+        url = _build_url("getMe")
+        with httpx.Client(timeout=TIMEOUT) as client:
+            response = client.get(url)
+
+        if response.status_code == 200:
+            data = response.json()
+            bot_name = data.get("result", {}).get("username")
+            logger.info(f"Telegram OK — bot: @{bot_name}")
+            return {"ok": True, "bot": bot_name}
+        else:
+            logger.warning(f"Telegram retornou status {response.status_code}")
+            return {"ok": False, "bot": None}
+
+    except Exception as e:
+        logger.error(f"Erro ao testar conexão Telegram: {e}")
+        return {"ok": False, "bot": None}
+
+
+# ============================================================
 # VERIFICAR RESULTADO (VERSÃO CORRETA)
 # ============================================================
 
