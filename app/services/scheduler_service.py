@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.database.connection import SessionLocal
 from app.services.coleta_service import coletar_novo_resultado
 from app.services.analise_service import analisar_e_gerar_sinal
-from app.services.telegram_service import enviar_sinal, verificar_resultado  # 🔥 ADICIONADO
+from app.services.telegram_service import enviar_sinal, verificar_resultado
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -42,19 +42,17 @@ def _executar_ciclo() -> None:
         # ===================================================
         resultado = coletar_novo_resultado(db, fonte="scraping")
 
-        if not resultado:
+        if resultado:
+            logger.debug(f"Ciclo: resultado coletado → {resultado.resultado}")
+        else:
             logger.warning("Nenhum resultado coletado (falha ou repetido)")
-            
-            # 🔥 MESMO SEM NOVO RESULTADO, TENTA VERIFICAR GREEN/RED
-            verificar_resultado(db)
-            return
-
-        logger.debug(f"Ciclo: resultado coletado → {resultado.resultado}")
 
         # ===================================================
-        # PASSO 2 — ANÁLISE
+        # PASSO 2 — ANÁLISE (só roda se tiver resultado novo)
         # ===================================================
-        sinal = analisar_e_gerar_sinal(db)
+        sinal = None
+        if resultado:
+            sinal = analisar_e_gerar_sinal(db)
 
         # ===================================================
         # PASSO 3 — ENVIO TELEGRAM
@@ -71,10 +69,13 @@ def _executar_ciclo() -> None:
                 logger.warning(f"Sinal {sinal.id} NÃO enviado ao Telegram")
 
         # ===================================================
-        # 🔥 PASSO 4 — VERIFICAR RESULTADO (GREEN / RED)
+        # 🔥 PASSO 4 — VERIFICAR RESULTADO (SEMPRE RODA)
         # ===================================================
         verificar_resultado(db)
 
+        # ===================================================
+        # 📊 STATS (AGORA SEMPRE ATUALIZA)
+        # ===================================================
         _stats["ciclos_executados"] += 1
         _stats["ultimo_ciclo"] = datetime.now(timezone.utc).isoformat()
 
@@ -112,7 +113,7 @@ def iniciar_scheduler() -> None:
         coalesce=True,
     )
 
-    _scheduler.add_listener(_listener_jobs, EVENT_JOB_ERROR | EVENT_JOB_EXECUTED)
+    _scheduler.add_listener(_listener_jobs, EVENT_JOB_ERROR | EVENT_JOB_EXECED)
 
     _scheduler.start()
 
