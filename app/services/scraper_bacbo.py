@@ -1,8 +1,6 @@
 # ============================================================
-# scraper_bacbo.py
-# Coleta o resultado mais recente do Bac Bo ao Vivo (TipMiner)
-# Requer: pip install playwright
-#         playwright install chromium
+# app/services/scraper_bacbo.py
+# Coleta resultado real do Bac Bo ao Vivo via TipMiner
 # ============================================================
 
 import logging
@@ -11,41 +9,26 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Mapeamento de classes/textos do site → valores do sistema
-MAPA_RESULTADO = {
-    # Classes de cor que o TipMiner usa para cada resultado
-    "player":  "vermelho",   # Player  → vermelho
-    "banker":  "azul",       # Banker  → azul
-    "tie":     "branco",     # Tie     → branco
-    # Fallbacks por texto visível
-    "p":       "vermelho",
-    "b":       "azul",
-    "t":       "branco",
-}
-
-FALLBACK_PADRAO = "vermelho"
 URL = "https://www.tipminer.com/br/historico/blaze/bac-bo-ao-vivo"
-TIMEOUT_MS = 20_000   # 20 segundos
+TIMEOUT_MS = 25_000
+FALLBACK = "vermelho"
 
 
 def coletar_resultado_bacbo(debug: bool = False) -> str:
     """
-    Acessa o TipMiner via Playwright, aguarda os resultados do Bac Bo
-    carregarem e retorna o resultado mais recente como string.
+    Acessa o TipMiner com Playwright e retorna o resultado
+    mais recente do Bac Bo ao Vivo.
 
     Returns:
-        "vermelho"  → Player venceu
-        "azul"      → Banker venceu
-        "branco"    → Tie (empate)
+        "vermelho" → Player venceu
+        "azul"     → Banker venceu
+        "branco"   → Tie
     """
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
     except ImportError:
-        logger.error(
-            "Playwright não instalado. "
-            "Rode: pip install playwright && playwright install chromium"
-        )
-        return FALLBACK_PADRAO
+        logger.error("Playwright não instalado. Rode: pip install playwright && playwright install chromium")
+        return FALLBACK
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
@@ -53,6 +36,7 @@ def coletar_resultado_bacbo(debug: bool = False) -> str:
             args=[
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
+                "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
             ],
         )
@@ -71,245 +55,242 @@ def coletar_resultado_bacbo(debug: bool = False) -> str:
             if debug:
                 print(f"[DEBUG] Acessando {URL}")
 
-            page.goto(URL, wait_until="domcontentloaded", timeout=TIMEOUT_MS)
+            page.goto(URL, wait_until="networkidle", timeout=TIMEOUT_MS)
 
-            # Estratégia 1 — aguarda células com classe contendo "cell" e cor
-            resultado = _estrategia_cell_classes(page, debug)
-            if resultado:
-                return resultado
+            # Aguarda a página estabilizar
+            page.wait_for_timeout(2000)
 
-            # Estratégia 2 — aguarda por texto P / B / T em spans/divs
-            resultado = _estrategia_texto_pbt(page, debug)
-            if resultado:
-                return resultado
+            # Tenta cada estratégia em ordem
+            for estrategia in [
+                _por_classe_player_banker,
+                _por_texto_pbt,
+                _por_varredura_js,
+                _por_cor_background,
+            ]:
+                resultado = estrategia(page, debug)
+                if resultado:
+                    logger.info(f"Resultado coletado do TipMiner: {resultado}")
+                    return resultado
 
-            # Estratégia 3 — varre todos os elementos visíveis buscando padrões
-            resultado = _estrategia_varredura_geral(page, debug)
-            if resultado:
-                return resultado
-
-            logger.warning("Nenhuma estratégia extraiu o resultado. Usando fallback.")
-            return FALLBACK_PADRAO
+            logger.warning("Nenhuma estratégia funcionou — usando fallback")
+            return FALLBACK
 
         except PWTimeout:
-            logger.error(f"Timeout ({TIMEOUT_MS}ms) ao carregar {URL}")
-            return FALLBACK_PADRAO
+            logger.error(f"Timeout ao carregar TipMiner ({TIMEOUT_MS}ms)")
+            return FALLBACK
         except Exception as e:
-            logger.error(f"Erro inesperado no scraper: {e}", exc_info=True)
-            return FALLBACK_PADRAO
+            logger.error(f"Erro no scraper TipMiner: {e}", exc_info=True)
+            return FALLBACK
         finally:
             context.close()
             browser.close()
 
 
 # ------------------------------------------------------------------
-# Estratégia 1 — Células com classe contendo "player" / "banker" / "tie"
-# Padrão típico do TipMiner: div com classe bg-cell-player, bg-cell-banker, etc.
+# Estratégia 1 — classes com "player" / "banker" / "tie"
 # ------------------------------------------------------------------
-def _estrategia_cell_classes(page, debug: bool) -> Optional[str]:
+def _por_classe_player_banker(page, debug: bool) -> Optional[str]:
     try:
-        # Aguarda qualquer elemento com essas classes aparecer
-        seletores = [
-            "[class*='player']",
-            "[class*='banker']",
-            "[class*='tie']",
-            "[class*='Player']",
-            "[class*='Banker']",
-            "[class*='Tie']",
-        ]
+        resultado = page.evaluate("""
+            () => {
+                // Pega TODOS os elementos da página
+                const todos = Array.from(document.querySelectorAll('*'));
 
-        # Tenta aguardar pelo primeiro seletor que apareça
-        achou = False
-        for sel in seletores:
-            try:
-                page.wait_for_selector(sel, timeout=8_000)
-                achou = True
-                break
-            except Exception:
-                continue
+                // Filtra elementos pequenos que parecem células de resultado
+                const celulas = todos.filter(el => {
+                    const cls = (el.className || '').toString().toLowerCase();
+                    const temPalavra = cls.includes('player') || cls.includes('banker') || cls.includes('tie');
+                    if (!temPalavra) return false;
 
-        if not achou:
-            return None
+                    // Ignora tags de layout/texto
+                    const tag = el.tagName.toLowerCase();
+                    if (['button','a','nav','header','footer','script','style','p','h1','h2','h3','h4','h5','section'].includes(tag)) return false;
 
-        # Pega o PRIMEIRO elemento de resultado (mais recente)
-        # Testa cada variação de classe
-        for palavra in ["player", "banker", "tie", "Player", "Banker", "Tie"]:
-            elementos = page.query_selector_all(f"[class*='{palavra}']")
-            # Filtra apenas elementos visíveis que parecem ser células de resultado
-            for el in elementos:
-                try:
-                    if not el.is_visible():
-                        continue
-                    classe = el.get_attribute("class") or ""
-                    # Ignora elementos de UI (botões, headers, labels)
-                    tag = el.evaluate("e => e.tagName.toLowerCase()")
-                    if tag in ("button", "a", "nav", "header", "footer", "label"):
-                        continue
-                    # Ignora se tem muito texto (provavelmente não é célula)
-                    texto = (el.inner_text() or "").strip()
-                    if len(texto) > 10:
-                        continue
+                    // Célula deve ser pequena (resultado visual)
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) return false;
+                    if (rect.width > 120 || rect.height > 120) return false;
 
-                    resultado = _classe_para_resultado(classe)
-                    if resultado:
-                        if debug:
-                            print(f"[DEBUG] Estratégia 1 → classe='{classe}' → {resultado}")
-                        return resultado
-                except Exception:
-                    continue
+                    return true;
+                });
 
+                if (celulas.length === 0) return null;
+
+                // Pega a primeira (mais recente — TipMiner lista do mais novo ao mais antigo)
+                const cls = (celulas[0].className || '').toString().toLowerCase();
+                if (cls.includes('player')) return 'player';
+                if (cls.includes('banker')) return 'banker';
+                if (cls.includes('tie'))    return 'tie';
+                return null;
+            }
+        """)
+
+        if resultado:
+            mapa = {"player": "vermelho", "banker": "azul", "tie": "branco"}
+            valor = mapa.get(resultado)
+            if debug:
+                print(f"[DEBUG] Estratégia 1 → raw='{resultado}' → {valor}")
+            return valor
         return None
-
     except Exception as e:
         logger.debug(f"Estratégia 1 falhou: {e}")
         return None
 
 
 # ------------------------------------------------------------------
-# Estratégia 2 — Texto "P", "B", "T" dentro de células pequenas
+# Estratégia 2 — texto "P", "B", "T" em células pequenas
 # ------------------------------------------------------------------
-def _estrategia_texto_pbt(page, debug: bool) -> Optional[str]:
+def _por_texto_pbt(page, debug: bool) -> Optional[str]:
     try:
-        page.wait_for_selector("div, span", timeout=5_000)
+        resultado = page.evaluate("""
+            () => {
+                const mapa = {
+                    'P': 'player', 'PLAYER': 'player',
+                    'B': 'banker', 'BANKER': 'banker',
+                    'T': 'tie',    'TIE':    'tie',
+                };
 
-        # Busca todos os elementos com texto curto
-        elementos = page.query_selector_all("div, span, td, li")
+                const todos = Array.from(document.querySelectorAll('div, span, td, li'));
 
-        resultados_encontrados = []
-        for el in elementos:
-            try:
-                if not el.is_visible():
-                    continue
-                texto = (el.inner_text() or "").strip().upper()
-                if texto not in ("P", "B", "T", "PLAYER", "BANKER", "TIE"):
-                    continue
+                for (const el of todos) {
+                    const texto = (el.innerText || '').trim().toUpperCase();
+                    if (!mapa[texto]) continue;
 
-                # Verifica tamanho do elemento (células são pequenas)
-                box = el.bounding_box()
-                if box and box["width"] > 80:
-                    continue
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) continue;
+                    // Célula pequena
+                    if (rect.width > 60 || rect.height > 60) continue;
 
-                classe = el.get_attribute("class") or ""
-                mapa = {
-                    "P": "vermelho", "PLAYER": "vermelho",
-                    "B": "azul",    "BANKER": "azul",
-                    "T": "branco",  "TIE":    "branco",
+                    return mapa[texto];
                 }
-                resultado = mapa.get(texto)
-                if resultado:
-                    resultados_encontrados.append(resultado)
-            except Exception:
-                continue
+                return null;
+            }
+        """)
 
-        if resultados_encontrados:
-            primeiro = resultados_encontrados[0]
+        if resultado:
+            mapa = {"player": "vermelho", "banker": "azul", "tie": "branco"}
+            valor = mapa.get(resultado)
             if debug:
-                print(f"[DEBUG] Estratégia 2 → encontrou {len(resultados_encontrados)} células, primeiro={primeiro}")
-            return primeiro
-
+                print(f"[DEBUG] Estratégia 2 → raw='{resultado}' → {valor}")
+            return valor
         return None
-
     except Exception as e:
         logger.debug(f"Estratégia 2 falhou: {e}")
         return None
 
 
 # ------------------------------------------------------------------
-# Estratégia 3 — Varredura geral por atributos data-* e aria-*
+# Estratégia 3 — varredura por data-attributes e aria-labels
 # ------------------------------------------------------------------
-def _estrategia_varredura_geral(page, debug: bool) -> Optional[str]:
+def _por_varredura_js(page, debug: bool) -> Optional[str]:
     try:
-        # Tenta extrair via JavaScript — inspeciona todos os elementos
-        resultado_js = page.evaluate("""
+        resultado = page.evaluate("""
             () => {
-                const keywords = ['player', 'banker', 'tie', 'Player', 'Banker', 'Tie'];
-                const allEls = document.querySelectorAll('*');
+                const palavras = ['player', 'banker', 'tie'];
+                const todos = Array.from(document.querySelectorAll('*'));
 
-                for (const el of allEls) {
-                    const cls = el.className || '';
-                    if (typeof cls !== 'string') continue;
-
-                    // Verifica classe
-                    for (const kw of keywords) {
-                        if (cls.includes(kw)) {
-                            // Ignora elementos não visuais de resultado
-                            const tag = el.tagName.toLowerCase();
-                            if (['button','a','nav','header','footer','script','style'].includes(tag)) continue;
-
-                            const rect = el.getBoundingClientRect();
-                            if (rect.width === 0 || rect.height === 0) continue;
-                            if (rect.width > 100 || rect.height > 100) continue;
-
-                            return kw.toLowerCase();
-                        }
-                    }
-
-                    // Verifica data-attributes
+                for (const el of todos) {
+                    // Verifica todos os atributos
                     for (const attr of el.attributes) {
                         const val = attr.value.toLowerCase();
-                        if (val === 'player' || val.includes('player')) return 'player';
-                        if (val === 'banker' || val.includes('banker')) return 'banker';
-                        if (val === 'tie'    || val.includes('tie'))    return 'tie';
+                        for (const p of palavras) {
+                            if (val === p) return p;
+                        }
                     }
                 }
+
+                // Tenta pegar pelo innerHTML de containers de histórico
+                const containers = document.querySelectorAll(
+                    '[class*="histor"], [class*="result"], [class*="grid"], [class*="list"], [class*="table"]'
+                );
+                for (const c of containers) {
+                    const html = c.innerHTML.toLowerCase();
+                    // Procura padrões como class="...player..." no HTML interno
+                    const matchP = html.match(/class="[^"]*player[^"]*"/);
+                    const matchB = html.match(/class="[^"]*banker[^"]*"/);
+                    const matchT = html.match(/class="[^"]*tie[^"]*"/);
+
+                    // Qual aparece PRIMEIRO no HTML (= resultado mais recente)
+                    const posP = matchP ? html.indexOf(matchP[0]) : Infinity;
+                    const posB = matchB ? html.indexOf(matchB[0]) : Infinity;
+                    const posT = matchT ? html.indexOf(matchT[0]) : Infinity;
+
+                    const minPos = Math.min(posP, posB, posT);
+                    if (minPos === Infinity) continue;
+
+                    if (minPos === posP) return 'player';
+                    if (minPos === posB) return 'banker';
+                    if (minPos === posT) return 'tie';
+                }
+
                 return null;
             }
         """)
 
-        if resultado_js:
-            resultado = MAPA_RESULTADO.get(resultado_js.lower())
-            if resultado:
-                if debug:
-                    print(f"[DEBUG] Estratégia 3 (JS) → raw='{resultado_js}' → {resultado}")
-                return resultado
-
+        if resultado:
+            mapa = {"player": "vermelho", "banker": "azul", "tie": "branco"}
+            valor = mapa.get(resultado)
+            if debug:
+                print(f"[DEBUG] Estratégia 3 → raw='{resultado}' → {valor}")
+            return valor
         return None
-
     except Exception as e:
         logger.debug(f"Estratégia 3 falhou: {e}")
         return None
 
 
 # ------------------------------------------------------------------
-# Helper — converte string de classe CSS para resultado
+# Estratégia 4 — cor de background (red/blue/green computada pelo browser)
 # ------------------------------------------------------------------
-def _classe_para_resultado(classe: str) -> Optional[str]:
-    """
-    Analisa a string de classes CSS e retorna o resultado correspondente.
-    Ex: "bg-cell-player rounded-md" → "vermelho"
-    """
-    classe_lower = classe.lower()
+def _por_cor_background(page, debug: bool) -> Optional[str]:
+    try:
+        resultado = page.evaluate("""
+            () => {
+                const todos = Array.from(document.querySelectorAll('div, span, td'));
 
-    if "player" in classe_lower:
-        return "vermelho"
-    if "banker" in classe_lower:
-        return "azul"
-    if "tie" in classe_lower:
-        return "branco"
+                for (const el of todos) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) continue;
+                    // Célula pequena e quadrada (típico de resultado)
+                    if (rect.width > 50 || rect.height > 50) continue;
+                    if (Math.abs(rect.width - rect.height) > 15) continue;
 
-    # Fallback por cores explícitas que o TipMiner pode usar
-    # (red/blue/green costumam ser usados em vez de player/banker/tie)
-    padroes_cor = {
-        r"\bred\b":   "vermelho",
-        r"\bblue\b":  "azul",
-        r"\bgreen\b": "branco",   # TipMiner usa verde para tie às vezes
-        r"text-red":  "vermelho",
-        r"text-blue": "azul",
-        r"bg-red":    "vermelho",
-        r"bg-blue":   "azul",
-    }
-    for padrao, valor in padroes_cor.items():
-        if re.search(padrao, classe_lower):
+                    const bg = window.getComputedStyle(el).backgroundColor;
+                    // bg vem como "rgb(R, G, B)"
+                    const match = bg.match(/rgb\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)/);
+                    if (!match) continue;
+
+                    const [, r, g, b] = match.map(Number);
+
+                    // Vermelho dominante → Player
+                    if (r > 150 && g < 100 && b < 100) return 'player';
+                    // Azul dominante → Banker
+                    if (b > 150 && r < 100 && g < 100) return 'banker';
+                    // Verde dominante → Tie
+                    if (g > 150 && r < 100 && b < 100) return 'tie';
+                }
+
+                return null;
+            }
+        """)
+
+        if resultado:
+            mapa = {"player": "vermelho", "banker": "azul", "tie": "branco"}
+            valor = mapa.get(resultado)
+            if debug:
+                print(f"[DEBUG] Estratégia 4 (cor) → raw='{resultado}' → {valor}")
             return valor
-
-    return None
+        return None
+    except Exception as e:
+        logger.debug(f"Estratégia 4 falhou: {e}")
+        return None
 
 
 # ------------------------------------------------------------------
-# Execução direta para teste
+# Teste direto
 # ------------------------------------------------------------------
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
-    print("Coletando resultado do Bac Bo ao Vivo...")
-    resultado = coletar_resultado_bacbo(debug=True)
-    print(f"\nResultado: {resultado}")
+    print("Coletando resultado real do Bac Bo...")
+    r = coletar_resultado_bacbo(debug=True)
+    print(f"\n>>> Resultado: {r}")
