@@ -1,6 +1,6 @@
 # ============================================================
 # app/services/scheduler_service.py
-# Automação do ciclo coleta → análise → envio.
+# Automação do ciclo coleta → análise → envio → resultado
 # ============================================================
 
 import logging
@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.database.connection import SessionLocal
 from app.services.coleta_service import coletar_novo_resultado
 from app.services.analise_service import analisar_e_gerar_sinal
-from app.services.telegram_service import enviar_sinal
+from app.services.telegram_service import enviar_sinal, verificar_resultado  # 🔥 ADICIONADO
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -44,6 +44,9 @@ def _executar_ciclo() -> None:
 
         if not resultado:
             logger.warning("Nenhum resultado coletado (falha ou repetido)")
+            
+            # 🔥 MESMO SEM NOVO RESULTADO, TENTA VERIFICAR GREEN/RED
+            verificar_resultado(db)
             return
 
         logger.debug(f"Ciclo: resultado coletado → {resultado.resultado}")
@@ -66,6 +69,11 @@ def _executar_ciclo() -> None:
                 logger.info(f"Sinal {sinal.id} enviado ao Telegram ✓")
             else:
                 logger.warning(f"Sinal {sinal.id} NÃO enviado ao Telegram")
+
+        # ===================================================
+        # 🔥 PASSO 4 — VERIFICAR RESULTADO (GREEN / RED)
+        # ===================================================
+        verificar_resultado(db)
 
         _stats["ciclos_executados"] += 1
         _stats["ultimo_ciclo"] = datetime.now(timezone.utc).isoformat()
@@ -98,7 +106,7 @@ def iniciar_scheduler() -> None:
         func=_executar_ciclo,
         trigger=IntervalTrigger(seconds=settings.collect_interval_seconds),
         id="ciclo_principal",
-        name="Coleta → Análise → Telegram",
+        name="Coleta → Análise → Telegram → Resultado",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
