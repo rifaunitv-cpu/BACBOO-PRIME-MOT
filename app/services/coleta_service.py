@@ -1,5 +1,5 @@
 # ============================================================
-# app/services/coleta_service.py (FINAL CORRIGIDO)
+# app/services/coleta_service.py (FINAL 100%)
 # ============================================================
 
 import logging
@@ -14,19 +14,14 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # ============================================================
-# COLETA VIA SCRAPING (REAL)
+# SCRAPING REAL
 # ============================================================
 
 def _coletar_via_scraping() -> Optional[str]:
-    """
-    Coleta REAL via scraper.
-    Retorna:
-        "azul", "vermelho", "branco" ou None (se falhar)
-    """
     try:
-        # ✅ IMPORT CORRIGIDO
         from app.services.scraper_bacbo import coletar_resultado
 
+        # ✅ SEM debug
         resultado = coletar_resultado()
 
         if resultado is None:
@@ -41,15 +36,12 @@ def _coletar_via_scraping() -> Optional[str]:
 
 
 # ============================================================
-# SIMULADO (SÓ TESTE MANUAL)
+# SIMULADO (MANUAL)
 # ============================================================
 
 def _coletar_simulado() -> str:
     import random
-    return random.choices(
-        ["azul", "vermelho", "branco"],
-        weights=[0.46, 0.46, 0.08]
-    )[0]
+    return random.choice(["azul", "vermelho", "branco"])
 
 
 COLETORES = {
@@ -67,13 +59,6 @@ def coletar_novo_resultado(
     fonte: str = "scraping"
 ) -> Optional[Resultado]:
 
-    """
-    🔥 REGRAS IMPORTANTES:
-    - NÃO salva se scraping falhar
-    - NÃO usa fallback automático
-    - NÃO duplica resultado
-    """
-
     coletor = COLETORES.get(fonte)
 
     if coletor is None:
@@ -83,21 +68,15 @@ def coletar_novo_resultado(
     try:
         valor = coletor()
 
-        # 🚫 NÃO SALVA SE FALHAR
         if valor is None:
-            logger.error("❌ Coleta falhou — NÃO salvando no banco")
+            logger.error("❌ Coleta falhou — NÃO salvando")
             return None
 
-        logger.debug(f"📊 Resultado coletado ({fonte}): {valor}")
-
     except Exception as e:
-        logger.error(f"❌ Erro ao coletar: {e}")
+        logger.error(f"❌ Erro na coleta: {e}")
         return None
 
-    # ============================================================
-    # 🚫 EVITA RESULTADO DUPLICADO
-    # ============================================================
-
+    # 🚫 evita duplicado
     ultimo = (
         db.query(Resultado)
         .order_by(Resultado.timestamp.desc())
@@ -108,13 +87,9 @@ def coletar_novo_resultado(
         logger.info("⚠️ Resultado repetido — ignorando")
         return None
 
-    # ============================================================
-    # 💾 SALVAR NO BANCO
-    # ============================================================
-
     novo = Resultado(
         resultado=valor,
-        fonte="scraping_real" if fonte == "scraping" else "simulado",
+        fonte="scraping_real",
         timestamp=datetime.now(timezone.utc),
     )
 
@@ -122,7 +97,7 @@ def coletar_novo_resultado(
     db.commit()
     db.refresh(novo)
 
-    logger.info(f"✅ Resultado salvo → id={novo.id} valor='{novo.resultado}'")
+    logger.info(f"✅ Resultado salvo → {valor}")
 
     return novo
 
@@ -131,11 +106,7 @@ def coletar_novo_resultado(
 # CONSULTAS
 # ============================================================
 
-def buscar_ultimos_resultados(
-    db: Session,
-    limite: int = 100
-) -> list[Resultado]:
-
+def buscar_ultimos_resultados(db: Session, limite: int = 100):
     return (
         db.query(Resultado)
         .order_by(Resultado.timestamp.desc())
