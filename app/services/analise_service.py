@@ -1,5 +1,5 @@
 # ============================================================
-# analise_service.py (SEM BUG)
+# app/services/analise_service.py
 # ============================================================
 
 import logging
@@ -7,76 +7,104 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
+
 from app.models.resultado import Resultado
 from app.models.sinal import Sinal
 
 logger = logging.getLogger(__name__)
 
+# Quantos consecutivos iguais disparam o sinal
 STREAK_MINIMO = 4
+# Confiança fixa para a regra de streak
+CONFIANCA_STREAK = 100.0
 
 
-def _tem_sinal_pendente(db: Session):
-    return db.query(Sinal).filter(
-        Sinal.enviado_telegram == True,
-        Sinal.acertou.is_(None)
-    ).first()
+def _calcular_streak_atual(serie: list[str]) -> tuple[str, int]:
+    """
+    Recebe lista de resultados do mais antigo ao mais recente.
+    Retorna (valor_atual, quantidade_consecutiva).
+    Ignora 'branco' na contagem de streak.
+    """
+    if not serie:
+        return ("", 0)
 
+    sem_branco = [r for r in serie if r != "branco"]
+    if not sem_branco:
+        return ("", 0)
 
-def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
-
-    # bloqueio
-    if _tem_sinal_pendente(db):
-        logger.info("Sinal pendente — bloqueando")
-        return None
-
-    registros = (
-        db.query(Resultado)
-        .order_by(Resultado.timestamp.desc())
-        .limit(20)
-        .all()
-    )
-
-    if len(registros) < STREAK_MINIMO:
-        return None
-
-    serie = [r.resultado for r in reversed(registros) if r.resultado != "branco"]
-
-    if len(serie) < STREAK_MINIMO:
-        return None
-
-    ultimo = serie[-1]
-
+    ultimo = sem_branco[-1]
     streak = 0
-    for r in reversed(serie):
+    for r in reversed(sem_branco):
         if r == ultimo:
             streak += 1
         else:
             break
 
-    if streak < STREAK_MINIMO:
+    return (ultimo, streak)
+
+
+def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
+    """
+    Regra principal:
+      - 5+ azuis/verdes consecutivos → entra VERMELHO
+      - 5+ vermelhos consecutivos    → entra AZUL
+    Ignora branco na contagem de streak.
+    Não gera sinal se já existe um sinal pendente (acertou=None).
+    """
+
+    # Não gera novo sinal enquanto tem um pendente
+    pendente = (
+        db.query(Sinal)
+        .filter(Sinal.enviado_telegram == True)
+        .filter(Sinal.acertou == None)  # noqa: E711
+        .first()
+    )
+    if pendente:
+        logger.debug("Sinal pendente ainda não verificado — aguardando resultado.")
         return None
 
-    # inversão
-    if ultimo == "vermelho":
+    # Busca histórico
+    registros = (
+        db.query(Resultado)
+        .order_by(Resultado.timestamp.desc())
+        .limit(50)
+        .all()
+    )
+
+    if len(registros) < STREAK_MINIMO:
+        logger.debug("Histórico insuficiente para análise.")
+        return None
+
+    # Do mais antigo ao mais recente
+    serie = [r.resultado.lower() for r in reversed(registros)]
+
+    cor_atual, streak = _calcular_streak_atual(serie)
+
+    logger.debug(f"Streak atual: {streak}x {cor_atual}")
+
+    if streak < STREAK_MINIMO:
+        logger.debug(f"Streak {streak} abaixo do mínimo ({STREAK_MINIMO}) — sem sinal.")
+        return None
+
+    # Define entrada contrária
+    if cor_atual in ("verde", "azul"):
+        tipo = "entrada vermelho"
+    elif cor_atual == "vermelho":
         tipo = "entrada azul"
     else:
-        tipo = "entrada vermelho"
-
-    descricao = f"{streak}x {ultimo}"
-
-    # evita duplicado
-    ultimo_sinal = db.query(Sinal).order_by(Sinal.timestamp.desc()).first()
-    if ultimo_sinal and ultimo_sinal.descricao == descricao and ultimo_sinal.acertou is None:
+        logger.debug("Streak de brancos — sem sinal.")
         return None
+
+    descricao = f"{streak} {cor_atual}(s) consecutivos → {tipo}"
+    logger.info(f"Sinal detectado: {descricao}")
 
     novo = Sinal(
         tipo=tipo,
-        confianca=100,
-        algoritmo="streak",
+        confianca=CONFIANCA_STREAK,
+        algoritmo="regra_streak",
         descricao=descricao,
         enviado_telegram=False,
         gale=0,
-        acertou=None,
         timestamp=datetime.now(timezone.utc),
     )
 
@@ -84,33 +112,25 @@ def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
     db.commit()
     db.refresh(novo)
 
-    logger.info(f"Sinal gerado: {descricao}")
-
     return novo
 
 
 # ============================================================
-# ATUALIZA RESULTADO (GALE)
+# TAXA DE ACERTO
 # ============================================================
 
-def atualizar_sinal(db: Session, resultado: str):
+def calcular_taxa_acerto(db: Session) -> dict:
+    sinais = db.query(Sinal).filter(Sinal.acertou.isnot(None)).all()
 
-    sinal = _tem_sinal_pendente(db)
+    if not sinais:
+        return {"total_verificados": 0, "acertos": 0, "erros": 0, "taxa_acerto": 0.0}
 
-    if not sinal:
-        return
+    acertos = sum(1 for s in sinais if s.acertou is True)
+    taxa = (acertos / len(sinais)) * 100.0
 
-    entrada = "azul" if "azul" in sinal.tipo else "vermelho"
-
-    if resultado == entrada:
-        sinal.acertou = True
-        logger.info("WIN")
-    else:
-        if sinal.gale < 2:
-            sinal.gale += 1
-            logger.info(f"GALE {sinal.gale}")
-        else:
-            sinal.acertou = False
-            logger.info("LOSS")
-
-    db.commit()
+    return {
+        "total_verificados": len(sinais),
+        "acertos": acertos,
+        "erros": len(sinais) - acertos,
+        "taxa_acerto": round(taxa, 2),
+    }
