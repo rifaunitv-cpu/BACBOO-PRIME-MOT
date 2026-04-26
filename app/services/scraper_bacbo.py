@@ -14,14 +14,19 @@ FALLBACK = "vermelho"
 
 # ============================================================
 # MAPEAMENTO CORRETO — Bac Bo Blaze
-#   Player (P) = AZUL   🔵
-#   Banker (B) = VERMELHO 🔴
-#   Tie    (T) = BRANCO ⚪
+#   Player / Jogador (P) = AZUL      🔵
+#   Banker / Banca   (B) = VERMELHO  🔴
+#   Tie    / Empate  (T) = BRANCO    ⚪
 # ============================================================
 MAPA_RESULTADO = {
-    "player": "azul",
-    "banker": "vermelho",
-    "tie":    "branco",
+    # Inglês
+    "player":  "azul",
+    "banker":  "vermelho",
+    "tie":     "branco",
+    # Português
+    "jogador": "azul",
+    "banca":   "vermelho",
+    "empate":  "branco",
 }
 
 
@@ -31,9 +36,9 @@ def coletar_resultado_bacbo(debug: bool = False) -> str:
     mais recente do Bac Bo ao Vivo.
 
     Returns:
-        "azul"     → Player venceu  🔵
-        "vermelho" → Banker venceu  🔴
-        "branco"   → Tie            ⚪
+        "azul"     → Jogador/Player venceu  🔵
+        "vermelho" → Banca/Banker venceu    🔴
+        "branco"   → Empate/Tie             ⚪
     """
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
@@ -95,7 +100,7 @@ def coletar_resultado_bacbo(debug: bool = False) -> str:
 
 
 # ------------------------------------------------------------------
-# Estratégia 1 — classes com "player" / "banker" / "tie"
+# Estratégia 1 — classes com "player"/"jogador" / "banker"/"banca" / "tie"/"empate"
 # ------------------------------------------------------------------
 def _por_classe_player_banker(page, debug: bool) -> Optional[str]:
     try:
@@ -105,7 +110,8 @@ def _por_classe_player_banker(page, debug: bool) -> Optional[str]:
 
                 const celulas = todos.filter(el => {
                     const cls = (el.className || '').toString().toLowerCase();
-                    const temPalavra = cls.includes('player') || cls.includes('banker') || cls.includes('tie');
+                    const temPalavra = cls.includes('player') || cls.includes('banker') || cls.includes('tie')
+                                    || cls.includes('jogador') || cls.includes('banca') || cls.includes('empate');
                     if (!temPalavra) return false;
 
                     const tag = el.tagName.toLowerCase();
@@ -121,9 +127,9 @@ def _por_classe_player_banker(page, debug: bool) -> Optional[str]:
                 if (celulas.length === 0) return null;
 
                 const cls = (celulas[0].className || '').toString().toLowerCase();
-                if (cls.includes('player')) return 'player';
-                if (cls.includes('banker')) return 'banker';
-                if (cls.includes('tie'))    return 'tie';
+                if (cls.includes('player') || cls.includes('jogador')) return 'player';
+                if (cls.includes('banker') || cls.includes('banca'))   return 'banker';
+                if (cls.includes('tie')    || cls.includes('empate'))  return 'tie';
                 return null;
             }
         """)
@@ -140,16 +146,16 @@ def _por_classe_player_banker(page, debug: bool) -> Optional[str]:
 
 
 # ------------------------------------------------------------------
-# Estratégia 2 — texto "P", "B", "T" em células pequenas
+# Estratégia 2 — texto "P", "B", "T" / "JOGADOR", "BANCA", "EMPATE"
 # ------------------------------------------------------------------
 def _por_texto_pbt(page, debug: bool) -> Optional[str]:
     try:
         resultado = page.evaluate("""
             () => {
                 const mapa = {
-                    'P': 'player', 'PLAYER': 'player',
-                    'B': 'banker', 'BANKER': 'banker',
-                    'T': 'tie',    'TIE':    'tie',
+                    'P': 'player', 'PLAYER': 'player', 'JOGADOR': 'player',
+                    'B': 'banker', 'BANKER': 'banker', 'BANCA':   'banker',
+                    'T': 'tie',    'TIE':    'tie',    'EMPATE':  'tie',
                 };
 
                 const todos = Array.from(document.querySelectorAll('div, span, td, li'));
@@ -180,13 +186,13 @@ def _por_texto_pbt(page, debug: bool) -> Optional[str]:
 
 
 # ------------------------------------------------------------------
-# Estratégia 3 — varredura por data-attributes e aria-labels
+# Estratégia 3 — varredura por data-attributes, aria-labels e innerHTML
 # ------------------------------------------------------------------
 def _por_varredura_js(page, debug: bool) -> Optional[str]:
     try:
         resultado = page.evaluate("""
             () => {
-                const palavras = ['player', 'banker', 'tie'];
+                const palavras = ['player', 'banker', 'tie', 'jogador', 'banca', 'empate'];
                 const todos = Array.from(document.querySelectorAll('*'));
 
                 for (const el of todos) {
@@ -203,9 +209,10 @@ def _por_varredura_js(page, debug: bool) -> Optional[str]:
                 );
                 for (const c of containers) {
                     const html = c.innerHTML.toLowerCase();
-                    const matchP = html.match(/class="[^"]*player[^"]*"/);
-                    const matchB = html.match(/class="[^"]*banker[^"]*"/);
-                    const matchT = html.match(/class="[^"]*tie[^"]*"/);
+
+                    const matchP = html.match(/class="[^"]*(?:player|jogador)[^"]*"/);
+                    const matchB = html.match(/class="[^"]*(?:banker|banca)[^"]*"/);
+                    const matchT = html.match(/class="[^"]*(?:tie|empate)[^"]*"/);
 
                     const posP = matchP ? html.indexOf(matchP[0]) : Infinity;
                     const posB = matchB ? html.indexOf(matchB[0]) : Infinity;
@@ -255,11 +262,11 @@ def _por_cor_background(page, debug: bool) -> Optional[str]:
 
                     const [, r, g, b] = match.map(Number);
 
-                    // Azul dominante → Player (AZUL na Blaze)
+                    // Azul dominante → Jogador/Player 🔵
                     if (b > 150 && r < 100 && g < 100) return 'player';
-                    // Vermelho dominante → Banker (VERMELHO na Blaze)
+                    // Vermelho dominante → Banca/Banker 🔴
                     if (r > 150 && g < 100 && b < 100) return 'banker';
-                    // Verde/outro → Tie
+                    // Verde/outro → Empate/Tie ⚪
                     if (g > 150 && r < 100 && b < 100) return 'tie';
                 }
 
