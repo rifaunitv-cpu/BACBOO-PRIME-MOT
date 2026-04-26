@@ -70,7 +70,7 @@ RUN mkdir -p /ms-playwright && \
 # ============================================================
 # 📁 CÓDIGO
 # ============================================================
-# bust-cache-v4
+# bust-cache-v5
 COPY app/ ./app/
 COPY frontend/ ./frontend/
 
