@@ -1,5 +1,5 @@
 # ============================================================
-# app/services/analise_service.py
+# app/services/analise_service.py (CORRIGIDO)
 # ============================================================
 
 import logging
@@ -15,15 +15,19 @@ logger = logging.getLogger(__name__)
 
 # Quantos consecutivos iguais disparam o sinal
 STREAK_MINIMO = 4
-# Confiança fixa para a regra de streak
+
+# Confiança fixa
 CONFIANCA_STREAK = 100.0
 
+
+# ============================================================
+# STREAK
+# ============================================================
 
 def _calcular_streak_atual(serie: list[str]) -> tuple[str, int]:
     """
     Recebe lista de resultados do mais antigo ao mais recente.
-    Retorna (valor_atual, quantidade_consecutiva).
-    Ignora 'branco' na contagem de streak.
+    Ignora branco.
     """
     if not serie:
         return ("", 0)
@@ -34,6 +38,7 @@ def _calcular_streak_atual(serie: list[str]) -> tuple[str, int]:
 
     ultimo = sem_branco[-1]
     streak = 0
+
     for r in reversed(sem_branco):
         if r == ultimo:
             streak += 1
@@ -43,27 +48,40 @@ def _calcular_streak_atual(serie: list[str]) -> tuple[str, int]:
     return (ultimo, streak)
 
 
-def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
-    """
-    Regra principal:
-      - 5+ azuis/verdes consecutivos → entra VERMELHO
-      - 5+ vermelhos consecutivos    → entra AZUL
-    Ignora branco na contagem de streak.
-    Não gera sinal se já existe um sinal pendente (acertou=None).
-    """
+# ============================================================
+# BLOQUEIO DE SINAL
+# ============================================================
 
-    # Não gera novo sinal enquanto tem um pendente
-    pendente = (
+def _tem_sinal_pendente(db: Session) -> Optional[Sinal]:
+    return (
         db.query(Sinal)
         .filter(Sinal.enviado_telegram == True)
-        .filter(Sinal.acertou == None)  # noqa: E711
+        .filter(Sinal.acertou.is_(None))
+        .order_by(Sinal.timestamp.desc())
         .first()
     )
-    if pendente:
-        logger.debug("Sinal pendente ainda não verificado — aguardando resultado.")
+
+
+def _ultimo_sinal(db: Session) -> Optional[Sinal]:
+    return (
+        db.query(Sinal)
+        .order_by(Sinal.timestamp.desc())
+        .first()
+    )
+
+
+# ============================================================
+# ANÁLISE PRINCIPAL
+# ============================================================
+
+def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
+
+    # 🚫 BLOQUEIO 1 — não gerar se tem sinal ativo
+    if _tem_sinal_pendente(db):
+        logger.info("⚠️ Sinal pendente — bloqueando nova entrada")
         return None
 
-    # Busca histórico
+    # Histórico
     registros = (
         db.query(Resultado)
         .order_by(Resultado.timestamp.desc())
@@ -72,31 +90,36 @@ def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
     )
 
     if len(registros) < STREAK_MINIMO:
-        logger.debug("Histórico insuficiente para análise.")
+        logger.debug("Histórico insuficiente.")
         return None
 
-    # Do mais antigo ao mais recente
+    # Ordem correta
     serie = [r.resultado.lower() for r in reversed(registros)]
 
     cor_atual, streak = _calcular_streak_atual(serie)
 
-    logger.debug(f"Streak atual: {streak}x {cor_atual}")
+    logger.info(f"📊 Streak atual: {streak}x {cor_atual}")
 
     if streak < STREAK_MINIMO:
-        logger.debug(f"Streak {streak} abaixo do mínimo ({STREAK_MINIMO}) — sem sinal.")
         return None
 
-    # Define entrada contrária
+    # 🎯 Entrada contrária
     if cor_atual in ("verde", "azul"):
         tipo = "entrada vermelho"
     elif cor_atual == "vermelho":
         tipo = "entrada azul"
     else:
-        logger.debug("Streak de brancos — sem sinal.")
         return None
 
     descricao = f"{streak} {cor_atual}(s) consecutivos → {tipo}"
-    logger.info(f"Sinal detectado: {descricao}")
+
+    # 🚫 BLOQUEIO 2 — evitar sinal repetido
+    ultimo = _ultimo_sinal(db)
+    if ultimo and ultimo.descricao == descricao and ultimo.acertou is None:
+        logger.info("⚠️ Mesmo sinal já ativo — ignorando duplicado")
+        return None
+
+    logger.info(f"🚀 Sinal gerado: {descricao}")
 
     novo = Sinal(
         tipo=tipo,
@@ -105,6 +128,7 @@ def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
         descricao=descricao,
         enviado_telegram=False,
         gale=0,
+        acertou=None,
         timestamp=datetime.now(timezone.utc),
     )
 
@@ -116,6 +140,38 @@ def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
 
 
 # ============================================================
+# RESULTADO / GALE
+# ============================================================
+
+def atualizar_resultado_sinal(db: Session, resultado: str):
+    """
+    Atualiza o sinal ativo com base no resultado.
+    """
+
+    sinal = _tem_sinal_pendente(db)
+
+    if not sinal:
+        return
+
+    entrada = "azul" if "azul" in sinal.tipo else "vermelho"
+
+    if resultado == entrada:
+        # ✅ WIN
+        sinal.acertou = True
+        logger.info("✅ WIN")
+    else:
+        # ❌ LOSS → GALE
+        if sinal.gale < 2:
+            sinal.gale += 1
+            logger.info(f"⚠️ GALE {sinal.gale}")
+        else:
+            sinal.acertou = False
+            logger.info("❌ LOSS FINAL")
+
+    db.commit()
+
+
+# ============================================================
 # TAXA DE ACERTO
 # ============================================================
 
@@ -123,7 +179,12 @@ def calcular_taxa_acerto(db: Session) -> dict:
     sinais = db.query(Sinal).filter(Sinal.acertou.isnot(None)).all()
 
     if not sinais:
-        return {"total_verificados": 0, "acertos": 0, "erros": 0, "taxa_acerto": 0.0}
+        return {
+            "total_verificados": 0,
+            "acertos": 0,
+            "erros": 0,
+            "taxa_acerto": 0.0
+        }
 
     acertos = sum(1 for s in sinais if s.acertou is True)
     taxa = (acertos / len(sinais)) * 100.0
