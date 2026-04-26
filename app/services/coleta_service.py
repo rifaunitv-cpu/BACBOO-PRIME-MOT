@@ -3,7 +3,7 @@
 # ============================================================
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 from sqlalchemy.orm import Session
 
@@ -43,3 +43,16 @@ def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Res
     db.refresh(novo)
     logger.info(f"✅ Resultado salvo: {valor}")
     return novo
+
+
+def buscar_ultimos_resultados(db: Session, limite: int = 50) -> List[Resultado]:
+    return (
+        db.query(Resultado)
+        .order_by(Resultado.timestamp.desc())
+        .limit(limite)
+        .all()
+    )
+
+
+def contar_resultados(db: Session) -> int:
+    return db.query(Resultado).count()
