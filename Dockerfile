@@ -1,12 +1,12 @@
 # ============================================================
 # Dockerfile (COM PLAYWRIGHT PRONTO)
 # ============================================================
-
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
@@ -44,8 +44,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# 🔥 INSTALA NAVEGADOR DO PLAYWRIGHT
-RUN playwright install chromium
+# 🔥 INSTALA NAVEGADOR DO PLAYWRIGHT EM PASTA ACESSÍVEL
+RUN mkdir -p /ms-playwright && \
+    playwright install chromium && \
+    chmod -R 755 /ms-playwright
 
 # 📁 CÓDIGO
 COPY app/ ./app/
@@ -57,6 +59,7 @@ RUN chmod +x entrypoint.sh
 
 # 🔐 PERMISSÃO
 RUN chown -R appuser:appgroup /app
+
 USER appuser
 
 # 🌐 PORTA
