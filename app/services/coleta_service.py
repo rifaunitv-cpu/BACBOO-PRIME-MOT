@@ -1,3 +1,7 @@
+# ============================================================
+# app/services/coleta_service.py
+# ============================================================
+
 import logging
 import importlib
 import sys
@@ -5,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Optional, List
 
 from sqlalchemy.orm import Session
-
 from app.models.resultado import Resultado
 
 logger = logging.getLogger(__name__)
@@ -16,16 +19,22 @@ def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Res
         # força reload do módulo para evitar cache de import
         if 'app.services.scraper_bacbo' in sys.modules:
             del sys.modules['app.services.scraper_bacbo']
+
         _mod = importlib.import_module('app.services.scraper_bacbo')
-        coletar_resultado = getattr(_mod, 'coletar_resultado')
-        valor = coletar_resultado()
+
+        # 🔥 nome correto da função
+        coletar = getattr(_mod, 'coletar_resultado_bacbo')
+        valor = coletar()
+
         if valor is None:
             logger.error("Scraping falhou — não salvando")
             return None
+
     except Exception as e:
         logger.error(f"❌ Erro ao coletar: {e}")
         return None
 
+    # Ignora resultado repetido
     ultimo = (
         db.query(Resultado)
         .order_by(Resultado.timestamp.desc())
@@ -43,6 +52,7 @@ def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Res
     db.add(novo)
     db.commit()
     db.refresh(novo)
+
     logger.info(f"✅ Resultado salvo: {valor}")
     return novo
 
