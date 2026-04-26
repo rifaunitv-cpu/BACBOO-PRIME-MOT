@@ -1,10 +1,9 @@
 # ============================================================
-# TELEGRAM SERVICE (ESTÁVEL + GREEN/RED CORRETO)
+# app/services/telegram_service.py
 # ============================================================
 
 import logging
 import httpx
-from typing import Optional
 
 from app.config import get_settings
 from app.models.sinal import Sinal
@@ -15,6 +14,8 @@ settings = get_settings()
 
 TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}/{method}"
 TIMEOUT = 10
+
+MAX_GALES = 2
 
 
 def _build_url(method: str) -> str:
@@ -31,17 +32,14 @@ def _build_url(method: str) -> str:
 def _enviar(mensagem: str) -> bool:
     try:
         url = _build_url("sendMessage")
-
         payload = {
             "chat_id": settings.telegram_chat_id,
             "text": mensagem,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }
-
         with httpx.Client(timeout=TIMEOUT) as client:
             response = client.post(url, json=payload)
-
         return response.status_code == 200
 
     except Exception as e:
@@ -54,21 +52,47 @@ def _enviar(mensagem: str) -> bool:
 # ============================================================
 
 def _formatar_sinal(sinal: Sinal) -> str:
-    tipo = sinal.tipo.lower().replace("verde", "azul")
+    tipo = sinal.tipo.lower()
 
     emoji = {
-        "entrada azul": "🔵",
+        "entrada azul":     "🔵",
+        "entrada verde":    "🔵",
         "entrada vermelho": "🔴",
-        "entrada branco": "⚪",
+        "entrada branco":   "⚪",
     }.get(tipo, "📊")
+
+    tipo_display = tipo.replace("verde", "azul").upper()
 
     return f"""
 🔥 <b>SINAL BAC BO</b>
 
-🎯 <b>{tipo.upper()}</b> {emoji}
+🎯 <b>{tipo_display}</b> {emoji}
 📊 Confiança: <b>{sinal.confianca:.1f}%</b>
 
-⚪ <b>Cobrir no branco</b>
+⚪ <b>Proteger no empate (branco)</b>
+
+👉 <a href="https://blaze.bet.br/pt/">ENTRAR NA BLAZE</a>
+""".strip()
+
+
+def _formatar_gale(sinal: Sinal, numero_gale: int) -> str:
+    tipo = sinal.tipo.lower()
+
+    emoji = {
+        "entrada azul":     "🔵",
+        "entrada verde":    "🔵",
+        "entrada vermelho": "🔴",
+    }.get(tipo, "📊")
+
+    tipo_display = tipo.replace("verde", "azul").upper()
+
+    return f"""
+⚠️ <b>GALE {numero_gale} — BAC BO</b>
+
+🎯 <b>{tipo_display}</b> {emoji}
+🔁 Entre novamente na mesma cor!
+
+⚪ <b>Proteger no empate (branco)</b>
 
 👉 <a href="https://blaze.bet.br/pt/">ENTRAR NA BLAZE</a>
 """.strip()
@@ -84,11 +108,10 @@ def enviar_sinal(sinal: Sinal) -> bool:
         return False
 
     mensagem = _formatar_sinal(sinal)
-
     enviado = _enviar(mensagem)
 
     if enviado:
-        logger.info(f"Sinal {sinal.id} enviado")
+        logger.info(f"Sinal {sinal.id} enviado ao Telegram")
 
     return enviado
 
@@ -98,12 +121,7 @@ def enviar_sinal(sinal: Sinal) -> bool:
 # ============================================================
 
 def testar_conexao() -> dict:
-    """
-    Testa se o bot Telegram está acessível e retorna dict de status.
-    Retorna: {"ok": True/False, "bot": "<nome>" ou None}
-    """
     if not settings.telegram_token:
-        logger.warning("Telegram token não configurado")
         return {"ok": False, "bot": None}
 
     try:
@@ -112,13 +130,10 @@ def testar_conexao() -> dict:
             response = client.get(url)
 
         if response.status_code == 200:
-            data = response.json()
-            bot_name = data.get("result", {}).get("username")
-            logger.info(f"Telegram OK — bot: @{bot_name}")
+            bot_name = response.json().get("result", {}).get("username")
             return {"ok": True, "bot": bot_name}
-        else:
-            logger.warning(f"Telegram retornou status {response.status_code}")
-            return {"ok": False, "bot": None}
+
+        return {"ok": False, "bot": None}
 
     except Exception as e:
         logger.error(f"Erro ao testar conexão Telegram: {e}")
@@ -126,20 +141,35 @@ def testar_conexao() -> dict:
 
 
 # ============================================================
-# VERIFICAR RESULTADO (VERSÃO CORRETA)
+# VERIFICAR RESULTADO — com suporte a GALE
 # ============================================================
 
 def verificar_resultado(db) -> None:
     """
-    Procura sinais enviados e ainda não verificados
-    e compara com o próximo resultado após o sinal
+    Fluxo completo com gale:
+
+      Jogada 1:
+        - branco          → ✅ GREEN (proteção)
+        - cor correta     → ✅ GREEN
+        - cor errada      → envia GALE 1, sinal.gale = 1
+
+      Jogada 2 (gale 1):
+        - branco          → ✅ GREEN (proteção)
+        - cor correta     → ✅ GREEN
+        - cor errada      → envia GALE 2, sinal.gale = 2
+
+      Jogada 3 (gale 2):
+        - branco          → ✅ GREEN (proteção)
+        - cor correta     → ✅ GREEN
+        - cor errada      → ❌ RED
+
+    sinal.acertou fica None enquanto ainda não foi decidido.
     """
 
-    # pega último sinal enviado e ainda não verificado
     sinal = (
         db.query(Sinal)
         .filter(Sinal.enviado_telegram == True)
-        .filter(Sinal.acertou.is_(None))
+        .filter(Sinal.acertou == None)  # noqa: E711
         .order_by(Sinal.timestamp.desc())
         .first()
     )
@@ -147,40 +177,72 @@ def verificar_resultado(db) -> None:
     if not sinal:
         return
 
-    # pega resultados APÓS o sinal
+    # Pega todos os resultados após o sinal em ordem cronológica
     resultados = (
         db.query(Resultado)
         .filter(Resultado.timestamp > sinal.timestamp)
         .order_by(Resultado.timestamp.asc())
-        .limit(2)  # pega até 2 jogadas (segurança)
         .all()
     )
 
     if not resultados:
         return
 
-    entrada = sinal.tipo.lower().replace("verde", "azul")
+    # gale=0 → avalia jogada 1 (índice 0)
+    # gale=1 → avalia jogada 2 (índice 1)
+    # gale=2 → avalia jogada 3 (índice 2)
+    indice_atual = sinal.gale
 
-    entrada_cor = None
-    if "azul" in entrada:
-        entrada_cor = "azul"
-    elif "vermelho" in entrada:
-        entrada_cor = "vermelho"
-
-    if not entrada_cor:
+    if len(resultados) <= indice_atual:
+        # Jogada ainda não saiu — aguarda próximo ciclo
         return
 
-    # 🔥 verifica primeira jogada após sinal
-    resultado_real = resultados[0].resultado.lower()
+    resultado_real = resultados[indice_atual].resultado.lower()
 
-    if resultado_real == entrada_cor or resultado_real == "branco":
-        _enviar("✅ <b>GREEN!</b>")
-        sinal.acertou = True
-        logger.info("GREEN confirmado")
-
+    # Normaliza a cor da entrada
+    entrada = sinal.tipo.lower()
+    if "vermelho" in entrada:
+        entrada_cor = "vermelho"
+    elif "azul" in entrada or "verde" in entrada:
+        entrada_cor = "azul_ou_verde"
     else:
-        _enviar("❌ <b>RED!</b>")
+        logger.warning(f"Tipo de sinal desconhecido: {sinal.tipo}")
         sinal.acertou = False
-        logger.info("RED confirmado")
+        db.commit()
+        return
 
-    db.commit()
+    # ── Verifica se acertou ───────────────────────────────────────
+    acertou = False
+
+    if resultado_real == "branco":
+        acertou = True
+        _enviar("✅ <b>GREEN!</b> (proteção no branco)")
+        logger.info(f"Sinal {sinal.id} gale={sinal.gale} → GREEN (branco)")
+
+    elif entrada_cor == "vermelho" and resultado_real == "vermelho":
+        acertou = True
+        _enviar("✅ <b>GREEN!</b>")
+        logger.info(f"Sinal {sinal.id} gale={sinal.gale} → GREEN")
+
+    elif entrada_cor == "azul_ou_verde" and resultado_real in ("azul", "verde"):
+        acertou = True
+        _enviar("✅ <b>GREEN!</b>")
+        logger.info(f"Sinal {sinal.id} gale={sinal.gale} → GREEN")
+
+    # ── Acertou → encerra ─────────────────────────────────────────
+    if acertou:
+        sinal.acertou = True
+        db.commit()
+        return
+
+    # ── Errou → gale ou RED ───────────────────────────────────────
+    if sinal.gale < MAX_GALES:
+        sinal.gale += 1
+        db.commit()
+        _enviar(_formatar_gale(sinal, sinal.gale))
+        logger.info(f"Sinal {sinal.id} → GALE {sinal.gale} enviado")
+    else:
+        sinal.acertou = False
+        db.commit()
+        _enviar("❌ <b>RED!</b>")
+        logger.info(f"Sinal {sinal.id} → RED (após {MAX_GALES} gales)")
