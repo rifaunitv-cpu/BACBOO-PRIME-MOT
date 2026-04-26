@@ -1,20 +1,21 @@
 # ============================================================
-# app/services/coleta_service.py (CORRIGIDO)
+# app/services/coleta_service.py (FINAL CORRIGIDO)
 # ============================================================
 
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
+
 from app.models.resultado import Resultado
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# ------------------------------------------------------------------
-# Coletores
-# ------------------------------------------------------------------
+# ============================================================
+# COLETA VIA SCRAPING (REAL)
+# ============================================================
 
 def _coletar_via_scraping() -> Optional[str]:
     """
@@ -22,10 +23,11 @@ def _coletar_via_scraping() -> Optional[str]:
     Retorna:
         "azul", "vermelho", "branco" ou None (se falhar)
     """
-    from app.services.scraper_bacbo import coletar_resultado_bacbo
-
     try:
-        resultado = coletar_resultado_bacbo(debug=False)
+        # ✅ IMPORT CORRIGIDO
+        from app.services.scraper_bacbo import coletar_resultado
+
+        resultado = coletar_resultado()
 
         if resultado is None:
             logger.error("❌ Scraping retornou None")
@@ -38,11 +40,11 @@ def _coletar_via_scraping() -> Optional[str]:
         return None
 
 
+# ============================================================
+# SIMULADO (SÓ TESTE MANUAL)
+# ============================================================
+
 def _coletar_simulado() -> str:
-    """
-    ⚠️ USO APENAS PARA TESTE MANUAL
-    NÃO será usado automaticamente
-    """
     import random
     return random.choices(
         ["azul", "vermelho", "branco"],
@@ -55,44 +57,61 @@ COLETORES = {
     "simulado": _coletar_simulado,
 }
 
-# ------------------------------------------------------------------
-# Função principal (CORRIGIDA)
-# ------------------------------------------------------------------
 
-def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Resultado]:
+# ============================================================
+# FUNÇÃO PRINCIPAL
+# ============================================================
+
+def coletar_novo_resultado(
+    db: Session,
+    fonte: str = "scraping"
+) -> Optional[Resultado]:
+
     """
-    Coleta um novo resultado e persiste no banco.
-
-    🔥 REGRA CRÍTICA:
-    - Se scraping falhar → NÃO salva nada
+    🔥 REGRAS IMPORTANTES:
+    - NÃO salva se scraping falhar
     - NÃO usa fallback automático
-
-    fonte:
-        "scraping" → real
-        "simulado" → só se você pedir manualmente
+    - NÃO duplica resultado
     """
 
     coletor = COLETORES.get(fonte)
 
     if coletor is None:
-        logger.error(f"Fonte inválida: {fonte}")
+        logger.error(f"❌ Fonte inválida: {fonte}")
         return None
 
     try:
         valor = coletor()
 
-        # 🚫 BLOQUEIO TOTAL DE DADO FAKE
+        # 🚫 NÃO SALVA SE FALHAR
         if valor is None:
             logger.error("❌ Coleta falhou — NÃO salvando no banco")
             return None
 
-        logger.debug(f"Resultado coletado via '{fonte}': {valor}")
+        logger.debug(f"📊 Resultado coletado ({fonte}): {valor}")
 
     except Exception as e:
         logger.error(f"❌ Erro ao coletar: {e}")
         return None
 
-    # ✅ SALVA APENAS DADO REAL
+    # ============================================================
+    # 🚫 EVITA RESULTADO DUPLICADO
+    # ============================================================
+
+    ultimo = (
+        db.query(Resultado)
+        .order_by(Resultado.timestamp.desc())
+        .first()
+    )
+
+    if ultimo and ultimo.resultado == valor:
+        logger.info("⚠️ Resultado repetido — ignorando")
+        return None
+
+    # ============================================================
+    # 💾 SALVAR NO BANCO
+    # ============================================================
+
     novo = Resultado(
         resultado=valor,
         fonte="scraping_real" if fonte == "scraping" else "simulado",
@@ -104,14 +123,19 @@ def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Res
     db.refresh(novo)
 
     logger.info(f"✅ Resultado salvo → id={novo.id} valor='{novo.resultado}'")
+
     return novo
 
 
-# ------------------------------------------------------------------
-# Consultas
-# ------------------------------------------------------------------
+# ============================================================
+# CONSULTAS
+# ============================================================
 
-def buscar_ultimos_resultados(db: Session, limite: int = 100) -> list[Resultado]:
+def buscar_ultimos_resultados(
+    db: Session,
+    limite: int = 100
+) -> list[Resultado]:
+
     return (
         db.query(Resultado)
         .order_by(Resultado.timestamp.desc())
