@@ -1,5 +1,5 @@
 # ============================================================
-# Dockerfile (PLAYWRIGHT 100% FUNCIONAL)
+# Dockerfile (PLAYWRIGHT ESTÁVEL - PRODUÇÃO)
 # ============================================================
 
 FROM python:3.11-slim
@@ -9,13 +9,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# 👤 Usuário
+# 👤 usuário seguro
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
 WORKDIR /app
 
 # ============================================================
-# 🔥 DEPENDÊNCIAS DO SISTEMA (COMPLETAS)
+# 🔥 DEPENDÊNCIAS DO SISTEMA (OBRIGATÓRIO PRA PLAYWRIGHT)
 # ============================================================
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -80,7 +80,7 @@ COPY app/ ./app/
 COPY frontend/ ./frontend/
 
 # ============================================================
-# 📜 ENTRYPOINT
+# 📜 ENTRYPOINT (se você usa)
 # ============================================================
 
 COPY entrypoint.sh .
