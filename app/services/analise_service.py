@@ -14,7 +14,7 @@ from app.models.sinal import Sinal
 logger = logging.getLogger(__name__)
 
 # Quantos consecutivos iguais disparam o sinal
-STREAK_MINIMO = 5
+STREAK_MINIMO = 4
 # Confiança fixa para a regra de streak
 CONFIANCA_STREAK = 100.0
 
