@@ -8,13 +8,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-# 👤 usuário seguro
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
 WORKDIR /app
 
 # ============================================================
-# 🔥 DEPENDÊNCIAS DO SISTEMA (OBRIGATÓRIO PRA PLAYWRIGHT)
+# 🔥 DEPENDÊNCIAS DO SISTEMA
 # ============================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -61,16 +60,16 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install playwright
 
 # ============================================================
-# 🔥 PLAYWRIGHT
+# 🔥 PLAYWRIGHT — sem --with-deps (libs já instaladas acima)
 # ============================================================
 RUN mkdir -p /ms-playwright && \
-    playwright install --with-deps chromium && \
+    playwright install chromium && \
     chmod -R 755 /ms-playwright
 
 # ============================================================
 # 📁 CÓDIGO
 # ============================================================
-# bust-cache-v5
+# bust-cache-v6
 COPY app/ ./app/
 COPY frontend/ ./frontend/
 
@@ -86,18 +85,9 @@ RUN chmod +x entrypoint.sh
 RUN chown -R appuser:appgroup /app
 USER appuser
 
-# ============================================================
-# 🌐 PORTA
-# ============================================================
 EXPOSE 8000
 
-# ============================================================
-# ❤️ HEALTHCHECK
-# ============================================================
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"
 
-# ============================================================
-# 🚀 START
-# ============================================================
 ENTRYPOINT ["./entrypoint.sh"]
