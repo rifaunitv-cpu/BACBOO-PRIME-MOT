@@ -68,36 +68,6 @@ RUN mkdir -p /ms-playwright && \
     chmod -R 755 /ms-playwright
 
 # ============================================================
-# 📁 CÓDIGO (ARG aqui invalida o cache desta camada em diante)
+# 📁 CÓDIGO
 # ============================================================
-ARG CACHEBUST=1
-COPY app/ ./app/
-COPY frontend/ ./frontend/
-
-# ============================================================
-# 📜 ENTRYPOINT
-# ============================================================
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
-
-# ============================================================
-# 🔐 PERMISSÕES
-# ============================================================
-RUN chown -R appuser:appgroup /app
-USER appuser
-
-# ============================================================
-# 🌐 PORTA
-# ============================================================
-EXPOSE 8000
-
-# ============================================================
-# ❤️ HEALTHCHECK
-# ============================================================
-HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"
-
-# ============================================================
-# 🚀 START
-# ============================================================
-ENTRYPOINT ["./entrypoint.sh"]
+# bust-cac
