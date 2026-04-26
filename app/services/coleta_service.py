@@ -12,7 +12,7 @@ from app.models.resultado import Resultado
 logger = logging.getLogger(__name__)
 
 
-def coletar_novo_resultado(db: Session) -> Optional[Resultado]:
+def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Resultado]:
     from app.services.scraper_bacbo import coletar_resultado
 
     try:
@@ -36,7 +36,7 @@ def coletar_novo_resultado(db: Session) -> Optional[Resultado]:
 
     novo = Resultado(
         resultado=valor,
-        fonte="scraping",
+        fonte=fonte,
         timestamp=datetime.now(timezone.utc),
     )
     db.add(novo)
