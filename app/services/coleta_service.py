@@ -24,7 +24,6 @@ def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Res
         logger.error(f"❌ Erro ao coletar: {e}")
         return None
 
-    # evita duplicado
     ultimo = (
         db.query(Resultado)
         .order_by(Resultado.timestamp.desc())
