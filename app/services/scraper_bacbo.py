@@ -1,9 +1,20 @@
+# ============================================================
+# scraper_bacbo.py (ESTÁVEL)
+# ============================================================
+
 from playwright.sync_api import sync_playwright
 import logging
 
 logger = logging.getLogger(__name__)
 
 def coletar_resultado():
+    """
+    Retorna:
+    - "azul"
+    - "vermelho"
+    - "branco"
+    - None (se falhar)
+    """
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -11,29 +22,22 @@ def coletar_resultado():
 
             page.goto("https://tipminer.com/history/bac-bo", timeout=30000)
 
-            page.wait_for_timeout(5000)  # espera carregar
+            # espera carregar
+            page.wait_for_timeout(6000)
 
-            # 🔍 AJUSTE ESSE SELECTOR SE PRECISAR
-            elementos = page.query_selector_all(".history-item")
-
-            if not elementos:
-                logger.error("❌ Nenhum resultado encontrado no scraping")
-                browser.close()
-                return None
-
-            texto = elementos[0].inner_text().lower()
+            conteudo = page.content().lower()
 
             browser.close()
 
-            if "blue" in texto:
+            if "blue" in conteudo:
                 return "azul"
-            elif "red" in texto:
+            elif "red" in conteudo:
                 return "vermelho"
-            elif "tie" in texto:
+            elif "tie" in conteudo:
                 return "branco"
 
             return None
 
     except Exception as e:
-        logger.error(f"❌ Erro scraping: {e}")
+        logger.error(f"Erro scraping: {e}")
         return None
