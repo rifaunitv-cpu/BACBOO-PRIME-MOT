@@ -43,11 +43,11 @@ def _executar_ciclo() -> None:
     try:
         # ===================================================
         # PASSO 1 — COLETA CONTROLADA (SCRAPING)
+        # só faz scraping a cada 30 segundos
         # ===================================================
         agora = time.time()
         resultado = None
 
-        # 🔥 só faz scraping a cada 30 segundos
         if agora - ultimo_scraping > 30:
             resultado = coletar_novo_resultado(db, fonte="scraping")
             ultimo_scraping = agora
@@ -60,14 +60,21 @@ def _executar_ciclo() -> None:
             logger.debug("Pulando scraping (aguardando intervalo)")
 
         # ===================================================
-        # PASSO 2 — ANÁLISE (só se tiver resultado novo)
+        # PASSO 2 — VERIFICAR RESULTADO PENDENTE
+        # Sempre roda antes de tentar gerar novo sinal
+        # ===================================================
+        verificar_resultado(db)
+
+        # ===================================================
+        # PASSO 3 — ANÁLISE E GERAÇÃO DE SINAL
+        # analisar_e_gerar_sinal já bloqueia se tiver pendente
         # ===================================================
         sinal = None
         if resultado:
             sinal = analisar_e_gerar_sinal(db)
 
         # ===================================================
-        # PASSO 3 — ENVIO TELEGRAM
+        # PASSO 4 — ENVIO TELEGRAM
         # ===================================================
         if sinal:
             enviado = enviar_sinal(sinal)
@@ -79,11 +86,6 @@ def _executar_ciclo() -> None:
                 logger.info(f"Sinal {sinal.id} enviado ao Telegram ✓")
             else:
                 logger.warning(f"Sinal {sinal.id} NÃO enviado ao Telegram")
-
-        # ===================================================
-        # PASSO 4 — VERIFICAR RESULTADO (SEMPRE RODA)
-        # ===================================================
-        verificar_resultado(db)
 
         # ===================================================
         # STATS
@@ -125,14 +127,10 @@ def iniciar_scheduler() -> None:
         coalesce=True,
     )
 
-    # 🔥 CORRIGIDO AQUI
     _scheduler.add_listener(_listener_jobs, EVENT_JOB_ERROR | EVENT_JOB_EXECUTED)
-
     _scheduler.start()
 
-    logger.info(
-        f"Scheduler iniciado a cada {settings.collect_interval_seconds}s"
-    )
+    logger.info(f"Scheduler iniciado a cada {settings.collect_interval_seconds}s")
 
 
 def parar_scheduler() -> None:
