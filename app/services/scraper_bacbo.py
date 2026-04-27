@@ -53,33 +53,35 @@ def fetch_page() -> str:
     return resp.text
 
 
+# 🔥 FUNÇÃO CORRIGIDA (ÚNICA ALTERAÇÃO REAL)
 def parse_rounds(soup: BeautifulSoup) -> list[dict]:
     rounds = []
 
-    time_pattern = re.compile(r"^\d{2}:\d{2}$")
-    value_pattern = re.compile(r"^\d{1,2}$")
+    # MÉTODO 1 — direto do HTML
+    elementos = soup.find_all(["div", "span"])
 
-    all_texts = [t.strip() for t in soup.stripped_strings]
+    for el in elementos:
+        texto = el.get_text(strip=True)
 
-    i = 0
-    while i < len(all_texts):
-        val = all_texts[i]
+        if texto.isdigit():
+            valor = int(texto)
 
-        if value_pattern.match(val) and 2 <= int(val) <= 12:
-            hora = None
+            if 2 <= valor <= 12:
+                rounds.append({
+                    "value": valor,
+                    "time": None
+                })
 
-            if i + 1 < len(all_texts) and time_pattern.match(all_texts[i + 1]):
-                hora = all_texts[i + 1]
-                i += 2
-            else:
-                i += 1
+    # MÉTODO 2 — fallback (se falhar)
+    if not rounds:
+        textos = soup.get_text(" ", strip=True)
+        numeros = re.findall(r"\b([2-9]|1[0-2])\b", textos)
 
+        for n in numeros:
             rounds.append({
-                "value": int(val),
-                "time": hora,
+                "value": int(n),
+                "time": None
             })
-        else:
-            i += 1
 
     return rounds
 
@@ -160,13 +162,13 @@ def coletar_resultado_bacbo(debug: bool = False):
                 print("❌ Nenhum resultado encontrado")
             return None
 
-        # ⚠️ IMPORTANTE: pega o MAIS RECENTE corretamente
+        # pega o mais recente corretamente
         ultimo = rounds[-1]["value"]
 
         if debug:
             print(f"Último valor: {ultimo}")
 
-        # 🔥 REGRA
+        # regra bac bo
         if ultimo == 7:
             return "branco"
         elif ultimo <= 6:
