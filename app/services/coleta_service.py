@@ -15,12 +15,10 @@ logger = logging.getLogger(__name__)
 
 def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Resultado]:
     try:
-        # Remove cache do módulo para sempre pegar versão mais recente
         if 'app.services.scraper_bacbo' in sys.modules:
             del sys.modules['app.services.scraper_bacbo']
 
         from app.services.scraper_bacbo import coletar_resultado_bacbo
-
         valor = coletar_resultado_bacbo()
 
         if valor is None:
@@ -31,7 +29,9 @@ def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Res
         logger.error(f"❌ Erro ao coletar: {e}", exc_info=True)
         return None
 
-    # Ignora resultado repetido
+    # ✅ Limpa cache da sessão antes de consultar
+    db.expire_all()
+
     ultimo = (
         db.query(Resultado)
         .order_by(Resultado.timestamp.desc())
@@ -55,6 +55,7 @@ def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Res
 
 
 def buscar_ultimos_resultados(db: Session, limite: int = 50) -> List[Resultado]:
+    db.expire_all()
     return (
         db.query(Resultado)
         .order_by(Resultado.timestamp.desc())
