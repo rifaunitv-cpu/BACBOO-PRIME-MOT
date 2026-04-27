@@ -39,9 +39,7 @@ logger.addHandler(stream_handler)
 # ─────────────────────────────────────────────
 URL = "https://www.tipminer.com/br/historico/blaze/bac-bo-ao-vivo"
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    ),
+    "User-Agent": "Mozilla/5.0",
     "Accept-Language": "pt-BR,pt;q=0.9",
 }
 
@@ -86,68 +84,15 @@ def parse_rounds(soup: BeautifulSoup) -> list[dict]:
     return rounds
 
 
-def parse_color_stats(soup: BeautifulSoup) -> dict:
-    stats = {}
-    text = soup.get_text(" ", strip=True)
-
-    patterns = {
-        "banca":   r"(\d+)\s*[•·]\s*([\d.]+)%\s*[•·]\s*Banca",
-        "empate":  r"(\d+)\s*[•·]\s*([\d.]+)%\s*[•·]\s*Empate",
-        "jogador": r"(\d+)\s*[•·]\s*([\d.]+)%\s*[•·]\s*Jogador",
-    }
-
-    for key, pat in patterns.items():
-        m = re.search(pat, text)
-        if m:
-            stats[key] = {"count": int(m.group(1)), "pct": float(m.group(2))}
-
-    return stats
-
-
-def parse_hourly(soup: BeautifulSoup) -> list[dict]:
-    hourly = []
-    text = soup.get_text(" ", strip=True)
-
-    pat = re.compile(r"(\d{2}):00\s+(\d+)\s+(\d+)\s+(\d+)")
-    for m in pat.finditer(text):
-        h, emp, jog, ban = m.groups()
-        e, j, b = int(emp), int(jog), int(ban)
-
-        if e + j + b == 0:
-            continue
-
-        hourly.append({
-            "hour": f"{h}:00",
-            "empate": e,
-            "jogador": j,
-            "banca": b,
-        })
-
-    return hourly
-
-
-def parse_streaks(soup: BeautifulSoup) -> dict:
-    streaks = {}
-    text = soup.get_text(" ", strip=True)
-
-    for key in ("banca", "empate", "jogador"):
-        m = re.search(rf"(\d+)\s+{key}\s+seguidos", text, re.IGNORECASE)
-        if m:
-            streaks[key] = int(m.group(1))
-
-    return streaks
-
-
 def build_payload(soup: BeautifulSoup) -> dict:
+    rounds = parse_rounds(soup)
+
     return {
         "scraped_at": datetime.now().isoformat(),
         "date": str(date.today()),
         "source": URL,
-        "rounds_count": len(parse_rounds(soup)),
-        "rounds": parse_rounds(soup)[:50],
-        "color_stats": parse_color_stats(soup),
-        "hourly_breakdown": parse_hourly(soup),
-        "max_streaks": parse_streaks(soup),
+        "rounds_count": len(rounds),
+        "rounds": rounds[:50],
     }
 
 
@@ -179,7 +124,6 @@ def main() -> None:
     parser.add_argument("--output", type=str, default=None)
     args = parser.parse_args()
 
-    # ✅ CORREÇÃO AQUI (SEM GLOBAL)
     if args.output:
         logger.handlers.clear()
 
@@ -200,20 +144,11 @@ def main() -> None:
         run_once()
 
 
-if __name__ == "__main__":
-    main()
 # ============================================================
-# 🔥 FUNÇÃO QUE O SISTEMA ESPERA (OBRIGATÓRIA)
+# 🔥 FUNÇÃO PRINCIPAL QUE O SISTEMA USA
 # ============================================================
 
 def coletar_resultado_bacbo(debug: bool = False):
-    """
-    Retorna o ÚLTIMO resultado convertido para:
-    - azul
-    - vermelho
-    - branco
-    """
-
     try:
         html = fetch_page()
         soup = BeautifulSoup(html, "lxml")
@@ -225,13 +160,13 @@ def coletar_resultado_bacbo(debug: bool = False):
                 print("❌ Nenhum resultado encontrado")
             return None
 
-        ultimo = rounds[0]["value"]  # mais recente
+        # ⚠️ IMPORTANTE: pega o MAIS RECENTE corretamente
+        ultimo = rounds[-1]["value"]
 
-        # 🔥 REGRA BAC BO
-        # 2–6 = Azul
-        # 8–12 = Vermelho
-        # 7 = Branco (empate)
+        if debug:
+            print(f"Último valor: {ultimo}")
 
+        # 🔥 REGRA
         if ultimo == 7:
             return "branco"
         elif ultimo <= 6:
@@ -243,3 +178,7 @@ def coletar_resultado_bacbo(debug: bool = False):
         if debug:
             print(f"Erro no scraper: {e}")
         return None
+
+
+if __name__ == "__main__":
+    main()
