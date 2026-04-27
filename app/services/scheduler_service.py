@@ -23,15 +23,14 @@ settings = get_settings()
 
 _scheduler: BackgroundScheduler | None = None
 
-# 🔥 CONTROLE DE SCRAPING
-ultimo_scraping = 0
-
 _stats = {
     "ciclos_executados": 0,
     "sinais_enviados": 0,
     "ultimo_ciclo": None,
     "erros": 0,
 }
+
+ultimo_scraping = 0
 
 
 def _executar_ciclo() -> None:
@@ -42,36 +41,26 @@ def _executar_ciclo() -> None:
 
     try:
         # ===================================================
-        # PASSO 1 — COLETA CONTROLADA (SCRAPING)
-        # só faz scraping a cada 30 segundos
+        # PASSO 1 — COLETA (a cada 30s)
         # ===================================================
         agora = time.time()
-        resultado = None
 
         if agora - ultimo_scraping > 30:
-            resultado = coletar_novo_resultado(db, fonte="scraping")
+            coletar_novo_resultado(db, fonte="scraping")
             ultimo_scraping = agora
-
-            if resultado:
-                logger.debug(f"Ciclo: resultado coletado → {resultado.resultado}")
-            else:
-                logger.warning("Scraping executado mas sem resultado novo")
         else:
             logger.debug("Pulando scraping (aguardando intervalo)")
 
         # ===================================================
         # PASSO 2 — VERIFICAR RESULTADO PENDENTE
-        # Sempre roda antes de tentar gerar novo sinal
         # ===================================================
         verificar_resultado(db)
 
         # ===================================================
-        # PASSO 3 — ANÁLISE E GERAÇÃO DE SINAL
-        # analisar_e_gerar_sinal já bloqueia se tiver pendente
+        # PASSO 3 — ANÁLISE (SEMPRE roda, independente de
+        # ter resultado novo ou repetido)
         # ===================================================
-        sinal = None
-        if resultado:
-            sinal = analisar_e_gerar_sinal(db)
+        sinal = analisar_e_gerar_sinal(db)
 
         # ===================================================
         # PASSO 4 — ENVIO TELEGRAM
@@ -87,9 +76,6 @@ def _executar_ciclo() -> None:
             else:
                 logger.warning(f"Sinal {sinal.id} NÃO enviado ao Telegram")
 
-        # ===================================================
-        # STATS
-        # ===================================================
         _stats["ciclos_executados"] += 1
         _stats["ultimo_ciclo"] = datetime.now(timezone.utc).isoformat()
 
