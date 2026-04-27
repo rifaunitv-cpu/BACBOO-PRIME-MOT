@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Scraper Bac Bo (TipMiner) — versão DEBUG
+Scraper Bac Bo (TipMiner)
+Pega resultado via Playwright (JS renderizado)
+Retorna: "azul" | "vermelho" | "branco" | None
 """
 
 import asyncio
@@ -24,7 +26,6 @@ async def _scrape() -> str | None:
             ],
         )
 
-        # Simula navegador real para evitar bloqueio
         context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -37,30 +38,27 @@ async def _scrape() -> str | None:
         page = await context.new_page()
 
         try:
-            print(f"[SCRAPER] Acessando {URL} ...")
-            await page.goto(URL, wait_until="networkidle", timeout=60000)
-            await asyncio.sleep(3)
+            print("[SCRAPER] Acessando site...")
 
-            # DEBUG: mostra o título da página
-            titulo = await page.title()
-            print(f"[SCRAPER] Título da página: {titulo}")
+            # ✅ domcontentloaded — não espera requisições infinitas do site ao vivo
+            await page.goto(URL, wait_until="domcontentloaded", timeout=30000)
 
-            # DEBUG: tenta achar qualquer div com title
-            all_titles = await page.query_selector_all("div[title]")
-            print(f"[SCRAPER] Total de div[title] encontrados: {len(all_titles)}")
+            # Aguarda o JS renderizar os resultados
+            await page.wait_for_selector(
+                'div[title*="PLAYER"], div[title*="BANKER"], div[title*="TIE"]',
+                timeout=20000,
+            )
+            await asyncio.sleep(1)
 
-            # Mostra os primeiros 5 titles para diagnóstico
-            for i, el in enumerate(all_titles[:5]):
-                t = await el.get_attribute("title") or ""
-                print(f"[SCRAPER] title[{i}]: {t}")
+            cells = await page.query_selector_all("div[title]")
+            print(f"[SCRAPER] div[title] encontrados: {len(cells)}")
 
-            # Tenta achar resultado
-            for cell in all_titles:
+            for cell in cells:
                 title = await cell.get_attribute("title") or ""
                 match = re.search(r"(PLAYER|BANKER|TIE)", title)
                 if match:
                     lado = match.group(1)
-                    print(f"[SCRAPER] ✅ Resultado encontrado: {lado} — {title}")
+                    print(f"[SCRAPER] ✅ {lado} — {title}")
                     if lado == "PLAYER":
                         return "azul"
                     elif lado == "BANKER":
@@ -85,7 +83,7 @@ def coletar_resultado_bacbo(debug: bool = False) -> str | None:
         print(f"[SCRAPER] Resultado final: {resultado}")
         return resultado
     except Exception as e:
-        print(f"[SCRAPER] Erro no asyncio.run: {e}")
+        print(f"[SCRAPER] Erro: {e}")
         return None
 
 
