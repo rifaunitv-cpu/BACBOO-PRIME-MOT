@@ -1,198 +1,62 @@
-#!/usr/bin/env python3
-"""
-Bac Bo Live - TipMiner Scraper & Logger
-"""
-
-import requests
-from bs4 import BeautifulSoup
-import json
-import logging
-import argparse
-import time
 import re
-from datetime import datetime, date
+from bs4 import BeautifulSoup
 
 # ─────────────────────────────────────────────
-#  Configuração de logging
+# NOVO PARSER (PEGA VALOR + HORA DO TITLE)
 # ─────────────────────────────────────────────
-LOG_FILE = "bacbo_data.log"
-
-logger = logging.getLogger("bacbo")
-logger.setLevel(logging.INFO)
-
-formatter = logging.Formatter(
-    "%(asctime)s [%(levelname)s] %(message)s",
-    "%Y-%m-%d %H:%M:%S"
-)
-
-file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
-file_handler.setFormatter(formatter)
-
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(formatter)
-
-logger.addHandler(file_handler)
-logger.addHandler(stream_handler)
-
-# ─────────────────────────────────────────────
-#  Constantes
-# ─────────────────────────────────────────────
-URL = "https://www.tipminer.com/br/historico/blaze/bac-bo-ao-vivo"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept-Language": "pt-BR,pt;q=0.9",
-}
-
-# ─────────────────────────────────────────────
-#  Extração (mantido, mas não é mais essencial)
-# ─────────────────────────────────────────────
-
-def fetch_page() -> str:
-    resp = requests.get(URL, headers=HEADERS, timeout=15)
-    resp.raise_for_status()
-    return resp.text
-
-
-def parse_rounds(soup: BeautifulSoup) -> list[dict]:
+def parse_rounds(soup):
     rounds = []
 
-    elementos = soup.find_all(["div", "span"])
+    elementos = soup.find_all("div", title=True)
 
     for el in elementos:
-        texto = el.get_text(strip=True)
+        title = el.get("title", "")
 
-        if texto.isdigit():
-            valor = int(texto)
+        match = re.search(r"(PLAYER|BANKER).*?(\d+).*?(\d{2}:\d{2})", title)
 
-            if 2 <= valor <= 12:
-                rounds.append({
-                    "value": valor,
-                    "time": None
-                })
-
-    if not rounds:
-        textos = soup.get_text(" ", strip=True)
-        numeros = re.findall(r"\b([2-9]|1[0-2])\b", textos)
-
-        for n in numeros:
+        if match:
             rounds.append({
-                "value": int(n),
-                "time": None
+                "lado": match.group(1),
+                "value": int(match.group(2)),
+                "time": match.group(3)
             })
 
     return rounds
 
 
-def build_payload(soup: BeautifulSoup) -> dict:
-    rounds = parse_rounds(soup)
-
-    return {
-        "scraped_at": datetime.now().isoformat(),
-        "date": str(date.today()),
-        "source": URL,
-        "rounds_count": len(rounds),
-        "rounds": rounds[:50],
-    }
-
-
-def send_to_log(payload: dict) -> None:
-    logger.info("=== BAC_BO_SNAPSHOT_START ===")
-    logger.info("ROUNDS_CAPTURED: %d", payload["rounds_count"])
-
-    if payload["rounds"]:
-        values = [str(r["value"]) for r in payload["rounds"]]
-        logger.info("ROUNDS: %s", " ".join(values))
-
-    logger.info("JSON: %s", json.dumps(payload, ensure_ascii=False))
-    logger.info("=== BAC_BO_SNAPSHOT_END ===")
-
-
-def run_once() -> None:
-    try:
-        html = fetch_page()
-        soup = BeautifulSoup(html, "lxml")
-        payload = build_payload(soup)
-        send_to_log(payload)
-    except Exception as e:
-        logger.error("Erro: %s", e)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--loop", type=int, default=0)
-    parser.add_argument("--output", type=str, default=None)
-    args = parser.parse_args()
-
-    if args.output:
-        logger.handlers.clear()
-
-        file_handler = logging.FileHandler(args.output, encoding="utf-8")
-        file_handler.setFormatter(formatter)
-
-        stream_handler = logging.StreamHandler()
-        stream_handler.setFormatter(formatter)
-
-        logger.addHandler(file_handler)
-        logger.addHandler(stream_handler)
-
-    if args.loop > 0:
-        while True:
-            run_once()
-            time.sleep(args.loop)
-    else:
-        run_once()
-
-
-# ============================================================
-# 🔥 FUNÇÃO PRINCIPAL (AGORA USANDO API — CORRIGIDO)
-# ============================================================
-
+# ─────────────────────────────────────────────
+# FUNÇÃO PRINCIPAL (USADA PELO SISTEMA)
+# ─────────────────────────────────────────────
 def coletar_resultado_bacbo(debug: bool = False):
     try:
-        hoje = date.today().isoformat()
+        html = fetch_page()  # ⚠️ já existe no seu código
+        soup = BeautifulSoup(html, "lxml")
 
-        url = f"https://www.tipminer.com/api/v3/types-per-hour/bac_bo/0194b476-0e88-740c-a957-87be3bc3aa55/{hoje}?timezone=America/Sao_Paulo"
+        rounds = parse_rounds(soup)
 
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json"
-        }
-
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-
-        data = resp.json()
-
-        valores = []
-
-        for hora in data.get("data", []):
-            for item in hora.get("items", []):
-                valor = item.get("value")
-                if valor is not None:
-                    valores.append(valor)
-
-        if not valores:
+        if not rounds:
             if debug:
-                print("❌ Sem dados da API")
+                print("❌ Nenhum resultado encontrado")
             return None
 
-        ultimo = valores[-1]
+        # pega o mais recente
+        ultimo = rounds[0]
+
+        valor = ultimo["value"]
+        horario = ultimo["time"]
 
         if debug:
-            print(f"Último valor API: {ultimo}")
+            print(f"🎯 Último resultado: {valor} | Hora: {horario}")
 
-        if ultimo == 7:
+        # lógica do seu sistema
+        if valor == 7:
             return "branco"
-        elif ultimo <= 6:
+        elif valor <= 6:
             return "azul"
         else:
             return "vermelho"
 
     except Exception as e:
         if debug:
-            print(f"Erro API: {e}")
+            print(f"Erro no scraper: {e}")
         return None
-
-
-if __name__ == "__main__":
-    main()
