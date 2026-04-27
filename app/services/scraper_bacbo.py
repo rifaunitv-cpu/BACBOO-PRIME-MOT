@@ -53,7 +53,6 @@ def fetch_page() -> str:
     return resp.text
 
 
-# 🔥 FUNÇÃO CORRIGIDA (ÚNICA ALTERAÇÃO REAL)
 def parse_rounds(soup: BeautifulSoup) -> list[dict]:
     rounds = []
 
@@ -72,7 +71,7 @@ def parse_rounds(soup: BeautifulSoup) -> list[dict]:
                     "time": None
                 })
 
-    # MÉTODO 2 — fallback (se falhar)
+    # MÉTODO 2 — fallback
     if not rounds:
         textos = soup.get_text(" ", strip=True)
         numeros = re.findall(r"\b([2-9]|1[0-2])\b", textos)
@@ -162,13 +161,12 @@ def coletar_resultado_bacbo(debug: bool = False):
                 print("❌ Nenhum resultado encontrado")
             return None
 
-        # pega o mais recente corretamente
-        ultimo = rounds[-1]["value"]
+        # ✅ CORREÇÃO AQUI (ESSENCIAL)
+        ultimo = rounds[0]["value"]
 
         if debug:
             print(f"Último valor: {ultimo}")
 
-        # regra bac bo
         if ultimo == 7:
             return "branco"
         elif ultimo <= 6:
