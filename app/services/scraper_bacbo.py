@@ -1,7 +1,17 @@
-import requests
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-# 🔥 URL DO STREAM (TEMPO REAL)
-STREAM_URL = "https://www.tipminer.com/stream/rounds/BAC_BO/670c0a4411256f2d32d197b4/v2/live?k=3"
+"""
+Scraper Bac Bo (TipMiner)
+Pega resultado via HTML (PLAYER / BANKER / TIE)
+"""
+
+import requests
+import re
+from bs4 import BeautifulSoup
+
+# 🔗 URL DO HISTÓRICO
+URL = "https://www.tipminer.com/br/historico/blaze/bac-bo-ao-vivo"
 
 
 # ============================================================
@@ -9,33 +19,48 @@ STREAM_URL = "https://www.tipminer.com/stream/rounds/BAC_BO/670c0a4411256f2d32d1
 # ============================================================
 def coletar_resultado_bacbo(debug: bool = False):
     try:
-        resp = requests.get(STREAM_URL, stream=True, timeout=10)
+        response = requests.get(URL, timeout=10)
 
-        for linha in resp.iter_lines():
-            if not linha:
-                continue
-
-            texto = linha.decode("utf-8")
-
-            # 🔥 DEBUG PRA VER O QUE TÁ CHEGANDO
+        if response.status_code != 200:
             if debug:
-                print("RAW:", texto)
+                print("Erro HTTP:", response.status_code)
+            return None
 
-            # 🔥 FILTRO CORRETO
-            if "PLAYER" in texto:
-                if debug:
-                    print("🎯 Resultado: AZUL (PLAYER)")
-                return "azul"
+        soup = BeautifulSoup(response.text, "lxml")
 
-            elif "BANKER" in texto:
-                if debug:
-                    print("🎯 Resultado: VERMELHO (BANKER)")
-                return "vermelho"
+        # 🔥 pega todos elementos com title
+        elementos = soup.find_all("div", title=True)
 
-            elif "TIE" in texto:
+        if not elementos:
+            if debug:
+                print("Nenhum elemento com title encontrado")
+            return None
+
+        # 🔥 percorre até achar o primeiro válido (mais recente)
+        for el in elementos:
+            title = el.get("title", "")
+
+            # Exemplo:
+            # PLAYER - 7 - 14:37
+            match = re.search(r"(PLAYER|BANKER|TIE)", title)
+
+            if match:
+                lado = match.group(1)
+
                 if debug:
-                    print("🎯 Resultado: BRANCO (TIE)")
-                return "branco"
+                    print(f"🎯 Encontrado: {title}")
+
+                if lado == "PLAYER":
+                    return "azul"
+
+                elif lado == "BANKER":
+                    return "vermelho"
+
+                elif lado == "TIE":
+                    return "branco"
+
+        if debug:
+            print("Nenhum resultado válido encontrado")
 
         return None
 
