@@ -1,6 +1,5 @@
 # ============================================================
 # app/services/scheduler_service.py
-# Automação do ciclo coleta → análise → envio → resultado
 # ============================================================
 
 import logging
@@ -10,7 +9,6 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED
-from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database.connection import SessionLocal
@@ -37,7 +35,9 @@ def _executar_ciclo() -> None:
     global _stats, ultimo_scraping
 
     logger.debug("Iniciando ciclo de automação...")
-    db: Session = SessionLocal()
+
+    # ✅ Nova sessão a cada ciclo — elimina cache do SQLAlchemy
+    db = SessionLocal()
 
     try:
         # ===================================================
@@ -47,6 +47,9 @@ def _executar_ciclo() -> None:
 
         if agora - ultimo_scraping > 30:
             coletar_novo_resultado(db, fonte="scraping")
+            db.close()
+            # ✅ Abre nova sessão limpa após gravar resultado
+            db = SessionLocal()
             ultimo_scraping = agora
         else:
             logger.debug("Pulando scraping (aguardando intervalo)")
@@ -55,10 +58,11 @@ def _executar_ciclo() -> None:
         # PASSO 2 — VERIFICAR RESULTADO PENDENTE
         # ===================================================
         verificar_resultado(db)
+        db.close()
+        db = SessionLocal()
 
         # ===================================================
-        # PASSO 3 — ANÁLISE (SEMPRE roda, independente de
-        # ter resultado novo ou repetido)
+        # PASSO 3 — ANÁLISE (sempre roda com sessão fresca)
         # ===================================================
         sinal = analisar_e_gerar_sinal(db)
 
