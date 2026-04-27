@@ -28,33 +28,29 @@ def parse_rounds(soup):
 # FUNÇÃO PRINCIPAL
 # ─────────────────────────────────────────────
 def coletar_resultado_bacbo(debug: bool = False):
+  import requests
+
+STREAM_URL = "https://www.tipminer.com/stream/rounds/BAC_BO/670c0a4411256f2d32d197b4/v2/live?k=3"
+
+def coletar_resultado_bacbo(debug: bool = False):
     try:
-        html = fetch_page()  # já existe no seu código
-        soup = BeautifulSoup(html, "lxml")
+        resp = requests.get(STREAM_URL, stream=True, timeout=10)
 
-        rounds = parse_rounds(soup)
+        for linha in resp.iter_lines():
+            if linha:
+                texto = linha.decode("utf-8")
 
-        if not rounds:
-            if debug:
-                print("❌ Nenhum resultado encontrado")
-            return None
+                if "PLAYER" in texto or "BANKER" in texto or "TIE" in texto:
 
-        # 🔥 pega o MAIS RECENTE
-        ultimo = rounds[-1]
+                    if debug:
+                        print(f"🎯 RAW: {texto}")
 
-        lado = ultimo["lado"]
-        horario = ultimo["time"]
-
-        if debug:
-            print(f"🎯 Resultado: {lado} | Hora: {horario}")
-
-        # 🎨 CORES CORRETAS
-        if lado == "PLAYER":
-            return "azul"
-        elif lado == "BANKER":
-            return "vermelho"
-        elif lado == "TIE":
-            return "branco"
+                    if "PLAYER" in texto:
+                        return "azul"
+                    elif "BANKER" in texto:
+                        return "vermelho"
+                    elif "TIE" in texto:
+                        return "branco"
 
         return None
 
