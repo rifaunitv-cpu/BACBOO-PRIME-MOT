@@ -202,3 +202,44 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+# ============================================================
+# 🔥 FUNÇÃO QUE O SISTEMA ESPERA (OBRIGATÓRIA)
+# ============================================================
+
+def coletar_resultado_bacbo(debug: bool = False):
+    """
+    Retorna o ÚLTIMO resultado convertido para:
+    - azul
+    - vermelho
+    - branco
+    """
+
+    try:
+        html = fetch_page()
+        soup = BeautifulSoup(html, "lxml")
+
+        rounds = parse_rounds(soup)
+
+        if not rounds:
+            if debug:
+                print("❌ Nenhum resultado encontrado")
+            return None
+
+        ultimo = rounds[0]["value"]  # mais recente
+
+        # 🔥 REGRA BAC BO
+        # 2–6 = Azul
+        # 8–12 = Vermelho
+        # 7 = Branco (empate)
+
+        if ultimo == 7:
+            return "branco"
+        elif ultimo <= 6:
+            return "azul"
+        else:
+            return "vermelho"
+
+    except Exception as e:
+        if debug:
+            print(f"Erro no scraper: {e}")
+        return None
