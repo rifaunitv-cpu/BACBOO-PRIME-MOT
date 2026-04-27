@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """
-Bac Bo Live - TipMiner Scraper & Logger
+Bac Bo Live - TipMiner Scraper & Logger (VERSÃO API ESTÁVEL)
 """
 
 import requests
-from bs4 import BeautifulSoup
 import json
 import logging
 import argparse
 import time
-import re
 from datetime import datetime, date
 
 # ─────────────────────────────────────────────
@@ -35,65 +33,57 @@ logger.addHandler(file_handler)
 logger.addHandler(stream_handler)
 
 # ─────────────────────────────────────────────
-#  Constantes
+#  Configuração API
 # ─────────────────────────────────────────────
-URL = "https://www.tipminer.com/br/historico/blaze/bac-bo-ao-vivo"
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
-    "Accept-Language": "pt-BR,pt;q=0.9",
+    "Accept": "application/json"
 }
 
+GAME_ID = "0194b476-0e88-740c-a957-87be3bc3aa55"
+
+
 # ─────────────────────────────────────────────
-#  Extração dos dados
+#  Função API (NOVA)
 # ─────────────────────────────────────────────
 
-def fetch_page() -> str:
-    resp = requests.get(URL, headers=HEADERS, timeout=15)
+def fetch_api() -> dict:
+    hoje = datetime.now().strftime("%Y-%m-%d")
+
+    url = f"https://www.tipminer.com/api/v3/types-per-hour/bac_bo/{GAME_ID}/{hoje}?timezone=America/Sao_Paulo"
+
+    resp = requests.get(url, headers=HEADERS, timeout=10)
     resp.raise_for_status()
-    return resp.text
+
+    return resp.json()
 
 
-def parse_rounds(soup: BeautifulSoup) -> list[dict]:
+def parse_rounds_api(data: dict) -> list[dict]:
     rounds = []
 
-    # MÉTODO 1 — direto do HTML
-    elementos = soup.find_all(["div", "span"])
+    resultados = data.get("data", [])
 
-    for el in elementos:
-        texto = el.get_text(strip=True)
+    for r in resultados:
+        valor = r.get("value")
 
-        if texto.isdigit():
-            valor = int(texto)
-
-            if 2 <= valor <= 12:
-                rounds.append({
-                    "value": valor,
-                    "time": None
-                })
-
-    # MÉTODO 2 — fallback
-    if not rounds:
-        textos = soup.get_text(" ", strip=True)
-        numeros = re.findall(r"\b([2-9]|1[0-2])\b", textos)
-
-        for n in numeros:
+        if valor is not None:
             rounds.append({
-                "value": int(n),
-                "time": None
+                "value": int(valor),
+                "time": r.get("time")
             })
 
     return rounds
 
 
-def build_payload(soup: BeautifulSoup) -> dict:
-    rounds = parse_rounds(soup)
+def build_payload(data: dict) -> dict:
+    rounds = parse_rounds_api(data)
 
     return {
         "scraped_at": datetime.now().isoformat(),
         "date": str(date.today()),
-        "source": URL,
+        "source": "tipminer_api",
         "rounds_count": len(rounds),
-        "rounds": rounds[:50],
+        "rounds": rounds[-50:],  # últimos 50
     }
 
 
@@ -111,9 +101,8 @@ def send_to_log(payload: dict) -> None:
 
 def run_once() -> None:
     try:
-        html = fetch_page()
-        soup = BeautifulSoup(html, "lxml")
-        payload = build_payload(soup)
+        data = fetch_api()
+        payload = build_payload(data)
         send_to_log(payload)
     except Exception as e:
         logger.error("Erro: %s", e)
@@ -146,30 +135,35 @@ def main() -> None:
 
 
 # ============================================================
-# 🔥 FUNÇÃO PRINCIPAL QUE O SISTEMA USA
+# 🔥 FUNÇÃO PRINCIPAL QUE O SISTEMA USA (100% CORRIGIDA)
 # ============================================================
 
 def coletar_resultado_bacbo(debug: bool = False):
     try:
-        html = fetch_page()
-        soup = BeautifulSoup(html, "lxml")
+        data = fetch_api()
 
-        rounds = parse_rounds(soup)
+        resultados = data.get("data", [])
 
-        if not rounds:
+        if not resultados:
             if debug:
-                print("❌ Nenhum resultado encontrado")
+                print("❌ Nenhum resultado na API")
             return None
 
-        # ✅ CORREÇÃO AQUI (ESSENCIAL)
-        ultimo = rounds[0]["value"]
+        # 🟢 MAIS RECENTE
+        ultimo = resultados[-1]
+
+        valor = ultimo.get("value")
+
+        if valor is None:
+            return None
 
         if debug:
-            print(f"Último valor: {ultimo}")
+            print(f"Valor bruto: {valor}")
 
-        if ultimo == 7:
+        # 🎯 REGRA
+        if valor == 7:
             return "branco"
-        elif ultimo <= 6:
+        elif valor <= 6:
             return "azul"
         else:
             return "vermelho"
