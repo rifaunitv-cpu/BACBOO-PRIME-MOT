@@ -3,7 +3,6 @@
 # ============================================================
 
 import logging
-import importlib
 import sys
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -16,22 +15,20 @@ logger = logging.getLogger(__name__)
 
 def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Resultado]:
     try:
-        # força reload do módulo para evitar cache de import
+        # Remove cache do módulo para sempre pegar versão mais recente
         if 'app.services.scraper_bacbo' in sys.modules:
             del sys.modules['app.services.scraper_bacbo']
 
-        _mod = importlib.import_module('app.services.scraper_bacbo')
+        from app.services.scraper_bacbo import coletar_resultado_bacbo
 
-        # 🔥 nome correto da função
-        coletar = getattr(_mod, 'coletar_resultado_bacbo')
-        valor = coletar()
+        valor = coletar_resultado_bacbo()
 
         if valor is None:
             logger.error("Scraping falhou — não salvando")
             return None
 
     except Exception as e:
-        logger.error(f"❌ Erro ao coletar: {e}")
+        logger.error(f"❌ Erro ao coletar: {e}", exc_info=True)
         return None
 
     # Ignora resultado repetido
