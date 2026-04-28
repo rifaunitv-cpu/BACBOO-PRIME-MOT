@@ -56,8 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ============================================================
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    pip install playwright
+    pip install --no-cache-dir -r requirements.txt
 
 # ============================================================
 # 🔥 PLAYWRIGHT — sem --with-deps (libs já instaladas acima)
