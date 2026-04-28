@@ -48,51 +48,53 @@ def _enviar(mensagem: str) -> bool:
 
 
 # ============================================================
+# HELPERS DE DISPLAY
+# ============================================================
+
+def _display_tipo(tipo: str) -> tuple[str, str]:
+    """
+    Retorna (label_display, emoji) para o tipo de sinal.
+
+    entrada azul     → PLAYER (azul)  🔵
+    entrada vermelho → BANKER (vermelho) 🔴
+    """
+    t = tipo.lower()
+    if "azul" in t:
+        return "PLAYER (azul)", "🔵"
+    elif "vermelho" in t:
+        return "BANKER (vermelho)", "🔴"
+    return tipo.upper(), "📊"
+
+
+# ============================================================
 # MENSAGEM DE SINAL
 # ============================================================
 
 def _formatar_sinal(sinal: Sinal) -> str:
-    tipo = sinal.tipo.lower()
-
-    emoji = {
-        "entrada azul":     "🔵",
-        "entrada verde":    "🔵",
-        "entrada vermelho": "🔴",
-        "entrada branco":   "⚪",
-    }.get(tipo, "📊")
-
-    tipo_display = tipo.replace("verde", "azul").upper()
+    label, emoji = _display_tipo(sinal.tipo)
 
     return f"""
 🔥 <b>SINAL BAC BO</b>
 
-🎯 <b>{tipo_display}</b> {emoji}
+🎯 Entre em <b>{label}</b> {emoji}
 📊 Confiança: <b>{sinal.confianca:.1f}%</b>
 
-⚪ <b>Proteger no empate (branco)</b>
+⚪ <b>Proteção no TIE (branco)</b>
 
 👉 <a href="https://blaze.bet.br/pt/">ENTRAR NA BLAZE</a>
 """.strip()
 
 
 def _formatar_gale(sinal: Sinal, numero_gale: int) -> str:
-    tipo = sinal.tipo.lower()
-
-    emoji = {
-        "entrada azul":     "🔵",
-        "entrada verde":    "🔵",
-        "entrada vermelho": "🔴",
-    }.get(tipo, "📊")
-
-    tipo_display = tipo.replace("verde", "azul").upper()
+    label, emoji = _display_tipo(sinal.tipo)
 
     return f"""
 ⚠️ <b>GALE {numero_gale} — BAC BO</b>
 
-🎯 <b>{tipo_display}</b> {emoji}
-🔁 Entre novamente na mesma cor!
+🎯 Entre novamente em <b>{label}</b> {emoji}
+🔁 Mantenha a mesma entrada!
 
-⚪ <b>Proteger no empate (branco)</b>
+⚪ <b>Proteção no TIE (branco)</b>
 
 👉 <a href="https://blaze.bet.br/pt/">ENTRAR NA BLAZE</a>
 """.strip()
@@ -146,20 +148,20 @@ def testar_conexao() -> dict:
 
 def verificar_resultado(db) -> None:
     """
-    Fluxo completo com gale:
+    Fluxo de verificação com até 2 gales:
 
-      Jogada 1:
-        - branco          → ✅ GREEN (proteção)
+      Jogada 1 (gale=0):
+        - TIE (branco)    → ✅ GREEN (proteção)
         - cor correta     → ✅ GREEN
         - cor errada      → envia GALE 1, sinal.gale = 1
 
-      Jogada 2 (gale 1):
-        - branco          → ✅ GREEN (proteção)
+      Jogada 2 (gale=1):
+        - TIE (branco)    → ✅ GREEN (proteção)
         - cor correta     → ✅ GREEN
         - cor errada      → envia GALE 2, sinal.gale = 2
 
-      Jogada 3 (gale 2):
-        - branco          → ✅ GREEN (proteção)
+      Jogada 3 (gale=2):
+        - TIE (branco)    → ✅ GREEN (proteção)
         - cor correta     → ✅ GREEN
         - cor errada      → ❌ RED
 
@@ -188,9 +190,9 @@ def verificar_resultado(db) -> None:
     if not resultados:
         return
 
-    # gale=0 → avalia jogada 1 (índice 0)
-    # gale=1 → avalia jogada 2 (índice 1)
-    # gale=2 → avalia jogada 3 (índice 2)
+    # gale=0 → avalia jogada no índice 0
+    # gale=1 → avalia jogada no índice 1
+    # gale=2 → avalia jogada no índice 2
     indice_atual = sinal.gale
 
     if len(resultados) <= indice_atual:
@@ -199,35 +201,31 @@ def verificar_resultado(db) -> None:
 
     resultado_real = resultados[indice_atual].resultado.lower()
 
-    # Normaliza a cor da entrada
+    # Determina a cor esperada baseada no tipo do sinal
     entrada = sinal.tipo.lower()
     if "vermelho" in entrada:
-        entrada_cor = "vermelho"
-    elif "azul" in entrada or "verde" in entrada:
-        entrada_cor = "azul_ou_verde"
+        cor_esperada = "vermelho"   # entrada BANKER
+    elif "azul" in entrada:
+        cor_esperada = "azul"       # entrada PLAYER
     else:
         logger.warning(f"Tipo de sinal desconhecido: {sinal.tipo}")
         sinal.acertou = False
         db.commit()
         return
 
-    # ── Verifica se acertou ───────────────────────────────────────
+    # ── Verifica resultado ────────────────────────────────────────
     acertou = False
 
     if resultado_real == "branco":
+        # TIE sempre é proteção — GREEN
         acertou = True
-        _enviar("✅ <b>GREEN!</b> (proteção no branco)")
-        logger.info(f"Sinal {sinal.id} gale={sinal.gale} → GREEN (branco)")
+        _enviar("✅ <b>GREEN!</b> (proteção no TIE)")
+        logger.info(f"Sinal {sinal.id} gale={sinal.gale} → GREEN (TIE/branco)")
 
-    elif entrada_cor == "vermelho" and resultado_real == "vermelho":
+    elif resultado_real == cor_esperada:
         acertou = True
         _enviar("✅ <b>GREEN!</b>")
-        logger.info(f"Sinal {sinal.id} gale={sinal.gale} → GREEN")
-
-    elif entrada_cor == "azul_ou_verde" and resultado_real in ("azul", "verde"):
-        acertou = True
-        _enviar("✅ <b>GREEN!</b>")
-        logger.info(f"Sinal {sinal.id} gale={sinal.gale} → GREEN")
+        logger.info(f"Sinal {sinal.id} gale={sinal.gale} → GREEN ({cor_esperada})")
 
     # ── Acertou → encerra ─────────────────────────────────────────
     if acertou:
