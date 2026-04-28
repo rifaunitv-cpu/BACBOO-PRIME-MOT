@@ -3,22 +3,18 @@
 # ============================================================
 
 import logging
-import sys
 from datetime import datetime, timezone
 from typing import Optional, List
 
 from sqlalchemy.orm import Session
 from app.models.resultado import Resultado
+from app.services.scraper_bacbo import coletar_resultado_bacbo
 
 logger = logging.getLogger(__name__)
 
 
 def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Resultado]:
     try:
-        if 'app.services.scraper_bacbo' in sys.modules:
-            del sys.modules['app.services.scraper_bacbo']
-
-        from app.services.scraper_bacbo import coletar_resultado_bacbo
         valor = coletar_resultado_bacbo()
 
         if valor is None:
@@ -29,7 +25,7 @@ def coletar_novo_resultado(db: Session, fonte: str = "scraping") -> Optional[Res
         logger.error(f"❌ Erro ao coletar: {e}", exc_info=True)
         return None
 
-    # ✅ Limpa cache da sessão antes de consultar
+    # Limpa cache da sessão antes de consultar
     db.expire_all()
 
     ultimo = (
