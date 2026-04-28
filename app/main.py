@@ -58,24 +58,6 @@ app.include_router(dados_routes.router)
 app.include_router(sinais_routes.router)
 
 
-# ---- DEBUG TEMPORÁRIO — remover após corrigir o bug ----
-@app.get("/debug-coleta", include_in_schema=False)
-def debug_coleta():
-    import inspect, sys
-    import app.services.coleta_service as m
-    source = inspect.getsource(m)
-    modules = [k for k in sys.modules.keys() if 'coleta' in k or 'scraper' in k]
-    return {"source_preview": source[:800], "modules": modules}
-
-
-@app.get("/debug-scraper", include_in_schema=False)
-def debug_scraper():
-    import inspect
-    import app.services.scraper_bacbo as m
-    source = inspect.getsource(m)
-    return {"source_preview": source[:800]}
-# ---- FIM DEBUG ----
-
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 if os.path.isdir(FRONTEND_DIR):
