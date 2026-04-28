@@ -7,21 +7,27 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import text
 
 from app.models.resultado import Resultado
 from app.models.sinal import Sinal
 
 logger = logging.getLogger(__name__)
 
-STREAK_MINIMO = 4
+# Dispara sinal quando o streak chega EXATAMENTE em 4 consecutivos
+STREAK_EXATO = 4
 CONFIANCA_STREAK = 100.0
 
 
 def _calcular_streak_atual(serie: list[str]) -> tuple[str, int]:
+    """
+    Calcula o streak atual ignorando brancos.
+    Branco não conta nem zera o streak de azul/vermelho.
+    Retorna (cor_atual, contagem_consecutiva).
+    """
     if not serie:
         return ("", 0)
 
+    # Filtra brancos — branco não zera nem conta no streak
     sem_branco = [r for r in serie if r != "branco"]
     if not sem_branco:
         return ("", 0)
@@ -38,10 +44,10 @@ def _calcular_streak_atual(serie: list[str]) -> tuple[str, int]:
 
 
 def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
-    # ✅ Limpa cache — garante dados frescos do banco
+    # Garante dados frescos do banco
     db.expire_all()
 
-    # Não gera novo sinal enquanto tem um pendente
+    # Não gera novo sinal enquanto há um pendente de verificação
     pendente = (
         db.query(Sinal)
         .filter(Sinal.enviado_telegram == True)
@@ -53,7 +59,7 @@ def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
         logger.debug("Sinal pendente ainda não verificado — aguardando resultado.")
         return None
 
-    # Busca histórico fresco do banco
+    # Busca histórico recente
     registros = (
         db.query(Resultado)
         .order_by(Resultado.timestamp.desc())
@@ -61,7 +67,7 @@ def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
         .all()
     )
 
-    if len(registros) < STREAK_MINIMO:
+    if len(registros) < STREAK_EXATO:
         logger.debug("Histórico insuficiente para análise.")
         return None
 
@@ -70,29 +76,33 @@ def analisar_e_gerar_sinal(db: Session) -> Optional[Sinal]:
 
     logger.info(f"📊 Streak atual: {streak}x {cor_atual} | Total registros: {len(registros)}")
 
-    if streak < STREAK_MINIMO:
-        logger.debug(f"Streak {streak} abaixo do mínimo ({STREAK_MINIMO}) — sem sinal.")
+    # Só dispara quando o streak é EXATAMENTE 4
+    if streak != STREAK_EXATO:
+        logger.debug(f"Streak {streak} ≠ {STREAK_EXATO} — sem sinal.")
         return None
 
-    if cor_atual in ("verde", "azul"):
+    # Define a entrada oposta ao streak:
+    # 4x PLAYER (azul)    → entrar em BANKER (vermelho)
+    # 4x BANKER (vermelho) → entrar em PLAYER (azul)
+    if cor_atual == "azul":
         tipo = "entrada vermelho"
     elif cor_atual == "vermelho":
         tipo = "entrada azul"
     else:
-        logger.debug("Streak de brancos — sem sinal.")
+        logger.debug("Streak de cor desconhecida — sem sinal.")
         return None
 
-    # Evita duplicata para o mesmo streak
+    # Evita duplicata para o mesmo streak ainda pendente
     ultimo_sinal = (
         db.query(Sinal)
         .order_by(Sinal.timestamp.desc())
         .first()
     )
-    if ultimo_sinal and ultimo_sinal.tipo == tipo:
+    if ultimo_sinal and ultimo_sinal.tipo == tipo and ultimo_sinal.acertou is None:
         logger.debug(f"Sinal '{tipo}' já gerado para este streak — ignorando.")
         return None
 
-    descricao = f"{streak} {cor_atual}(s) consecutivos → {tipo}"
+    descricao = f"4x {cor_atual.upper()} consecutivos → {tipo.upper()}"
     logger.info(f"🎯 Sinal detectado: {descricao}")
 
     novo = Sinal(
